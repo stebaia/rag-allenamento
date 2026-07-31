@@ -378,7 +378,7 @@ docker compose up -d --build
 ```
 
 Questo comando:
-1. Legge `docker-compose.yml`, che definisce due servizi:
+1. Legge `docker-compose.yaml`, che definisce due servizi:
    - `qdrant`: l'immagine ufficiale di Qdrant, con un volume persistente
      (`qdrant_data`) così i vettori non si perdono se il container si
      riavvia.
@@ -417,7 +417,7 @@ leggera e veloce da scaricare/deployare.
 
 ## 10. Deploy su Coolify
 
-Coolify sa leggere direttamente un `docker-compose.yml`, quindi il
+Coolify sa leggere direttamente un `docker-compose.yaml`, quindi il
 deploy consiste principalmente nel puntarlo al repository e impostare le
 variabili d'ambiente sensibili (che NON stanno nel repository).
 
@@ -444,7 +444,7 @@ chiavi non finiscono online.
    "Application" collegata al repo, a seconda della versione di
    Coolify).
 2. Collega il repository Git del progetto.
-3. Indica `docker-compose.yml` come file di compose (di solito è già il
+3. Indica `docker-compose.yaml` come file di compose (di solito è già il
    default se sta nella root del repo).
 
 ### Passo 3 — variabili d'ambiente
@@ -456,14 +456,14 @@ Nella sezione **Environment Variables** della risorsa, imposta:
 | `OPENAI_API_KEY` | la tua chiave OpenAI | **rigenerala** se è quella vecchia esposta in passato |
 | `JWT_SECRET` | una stringa lunga e casuale | genera con `python3 -c "import secrets; print(secrets.token_hex(32))"` |
 
-Queste sono le uniche due che il `docker-compose.yml` si aspetta
+Queste sono le uniche due che il `docker-compose.yaml` si aspetta
 dall'ambiente esterno (`${OPENAI_API_KEY}`, `${JWT_SECRET}`); le altre
 (`QDRANT_URL`, `DB_PATH`, ecc.) sono già scritte nel compose stesso e non
 vanno duplicate su Coolify.
 
 ### Passo 4 — volumi persistenti
 
-Il `docker-compose.yml` dichiara già due volumi:
+Il `docker-compose.yaml` dichiara già due volumi:
 
 ```yaml
 volumes:
