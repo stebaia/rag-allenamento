@@ -1,7 +1,7 @@
 {
   "interactionModel": {
     "languageModel": {
-      "invocationName": "assistente allenamento",
+      "invocationName": "coach personale",
       "intents": [
         {
           "name": "AMAZON.CancelIntent",
@@ -28,16 +28,42 @@
           "slots": [
             {
               "name": "domanda",
-              "type": "AMAZON.SearchQuery"
+              "type": "Domanda"
             }
           ],
           "samples": [
-            "{domanda}",
             "chiedi {domanda}",
             "dimmi {domanda}",
             "dimmi di {domanda}",
             "sapresti dirmi {domanda}",
             "vorrei sapere {domanda}"
+          ]
+        }
+      ],
+      "types": [
+        {
+          "name": "Domanda",
+          "values": [
+            {
+              "name": {
+                "value": "cosa devo mangiare oggi"
+              }
+            },
+            {
+              "name": {
+                "value": "cosa devo mangiare lunedì a pranzo"
+              }
+            },
+            {
+              "name": {
+                "value": "cosa devo comprare"
+              }
+            },
+            {
+              "name": {
+                "value": "come devo allenarmi oggi"
+              }
+            }
           ]
         }
       ]

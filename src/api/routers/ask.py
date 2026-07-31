@@ -24,10 +24,16 @@ router = APIRouter(tags=["ask"])
 # ({context} e {question}) che LangChain riempie con i valori veri al
 # momento della chiamata. Tenerlo come costante di modulo evita di
 # ricrearlo identico ad ogni richiesta.
+#
+# {oggi}: il grafo (vedi rag/graph.py, risolvi_giorni_relativi) sostituisce
+# già "oggi"/"domani"/"ieri" nella domanda col nome del giorno prima di
+# cercare nei documenti; qui ripetiamo l'informazione anche nel prompt così
+# l'LLM può rispondere in modo naturale (es. dire "oggi" invece del nome del
+# giorno) e risolvere correttamente riferimenti relativi impliciti.
 _PROMPT = ChatPromptTemplate.from_template(
-    "Sei un assistente su dieta, spesa e allenamento. Rispondi usando SOLO il "
-    "contesto. Se l'informazione non c'è, dillo. Rispondi in italiano, conciso.\n\n"
-    "CONTESTO:\n{context}\n\nDOMANDA: {question}"
+    "Sei un assistente su dieta, spesa e allenamento. Oggi è {oggi}. Rispondi "
+    "usando SOLO il contesto. Se l'informazione non c'è, dillo. Rispondi in "
+    "italiano, conciso.\n\nCONTESTO:\n{context}\n\nDOMANDA: {question}"
 )
 
 

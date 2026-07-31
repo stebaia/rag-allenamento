@@ -26,10 +26,11 @@ router = APIRouter(prefix="/alexa", tags=["alexa"])
 # Stesso prompt di /ask, ma con un'indicazione in più: la risposta verrà
 # LETTA AD ALTA VOCE da Alexa, quindi deve restare breve e senza formattazione
 # (niente elenchi puntati, markdown, ecc. che non hanno senso parlati).
+# {oggi}: vedi commento in api/routers/ask.py, stessa logica.
 _PROMPT = ChatPromptTemplate.from_template(
-    "Sei un assistente vocale su dieta, spesa e allenamento. Rispondi usando "
-    "SOLO il contesto. Se l'informazione non c'è, dillo. Rispondi in "
-    "italiano, in una o due frasi brevi, senza elenchi puntati o "
+    "Sei un assistente vocale su dieta, spesa e allenamento. Oggi è {oggi}. "
+    "Rispondi usando SOLO il contesto. Se l'informazione non c'è, dillo. "
+    "Rispondi in italiano, in una o due frasi brevi, senza elenchi puntati o "
     "formattazione: la risposta verrà letta ad alta voce.\n\n"
     "CONTESTO:\n{context}\n\nDOMANDA: {question}"
 )

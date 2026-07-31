@@ -2,7 +2,11 @@
 __pycache__/
 *.pyc
 .env
+.DS_Store
 
 # indici vettoriali (rigenerabili dai documenti in documenti/)
 chroma_db/
 chroma_lc/
+
+# artefatto di build della Lambda Alexa (rigenerato da alexa-skill/build.sh)
+alexa-skill/build/

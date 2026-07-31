@@ -1,10 +1,40 @@
 """Grafo agentico LangGraph: recupero -> (riformula <-> recupera) -> genera."""
 
+import re
+from datetime import datetime, timedelta
 from typing import TypedDict
 
 from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 from langgraph.graph import END, START, StateGraph
+
+_GIORNI_SETTIMANA = (
+    "lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato", "domenica",
+)
+
+# Mappa parola relativa -> offset in giorni rispetto a oggi, usata per
+# risolvere "oggi"/"domani"/"ieri" nel nome del giorno reale (es. "venerdì")
+# PRIMA di interrogare il retriever: RetrieverIbrido riconosce solo nomi di
+# giorni espliciti nel testo della domanda (vedi rag/vectorstore.py), quindi
+# senza questa sostituzione il boost per giorno non scatterebbe mai.
+_RELATIVI = {"dopodomani": 2, "domani": 1, "oggi": 0, "ieri": -1}
+_RELATIVI_RE = re.compile(r"(?i)\b(dopodomani|domani|oggi|ieri)\b")
+
+
+def giorno_oggi() -> str:
+    """Nome del giorno della settimana corrente, in italiano (es. 'venerdì')."""
+    return _GIORNI_SETTIMANA[datetime.now().weekday()]
+
+
+def risolvi_giorni_relativi(domanda: str) -> str:
+    """Sostituisce 'oggi'/'domani'/'ieri'/'dopodomani' col nome del giorno reale."""
+
+    def _sostituisci(match: re.Match) -> str:
+        offset = _RELATIVI[match.group(1).lower()]
+        indice = (datetime.now() + timedelta(days=offset)).weekday()
+        return _GIORNI_SETTIMANA[indice]
+
+    return _RELATIVI_RE.sub(_sostituisci, domanda)
 
 
 class Stato(TypedDict):
@@ -17,8 +47,14 @@ class Stato(TypedDict):
 def costruisci_grafo(retriever, llm, prompt):
     # NODO: recupera i documenti dall'indice
     def nodo_recupera(stato: Stato):
-        docs = retriever.invoke(stato["domanda"])
-        return {"documenti": docs, "tentativi": stato.get("tentativi", 0) + 1}
+        # Risolta solo al primo passaggio (tentativi == 0): dal secondo in
+        # poi la domanda è già stata riscritta da nodo_riformula, che lavora
+        # a valle di questa sostituzione e non reintroduce parole relative.
+        domanda = stato["domanda"]
+        if stato.get("tentativi", 0) == 0:
+            domanda = risolvi_giorni_relativi(domanda)
+        docs = retriever.invoke(domanda)
+        return {"documenti": docs, "domanda": domanda, "tentativi": stato.get("tentativi", 0) + 1}
 
     # NODO: riscrive la domanda quando il recupero è scarso
     def nodo_riformula(stato: Stato):
@@ -34,7 +70,7 @@ def costruisci_grafo(retriever, llm, prompt):
     def nodo_genera(stato: Stato):
         contesto = "\n\n".join(d.page_content for d in stato["documenti"])
         risposta = (prompt | llm | StrOutputParser()).invoke(
-            {"context": contesto, "question": stato["domanda"]}
+            {"context": contesto, "question": stato["domanda"], "oggi": giorno_oggi()}
         )
         return {"risposta": risposta}
 
