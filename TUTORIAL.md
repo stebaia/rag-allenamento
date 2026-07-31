@@ -491,19 +491,23 @@ disattivata.
 3. Ripeti il test end-to-end (register → login → upload → ask) con
    `curl`, sostituendo `http://localhost:8000` con il tuo dominio.
 
-### Note per quando arriverà il frontend
+### Il frontend (`frontend/`)
 
-- Il frontend dovrà salvare il token JWT ricevuto da `/auth/login` (es.
-  in `localStorage`) e allegarlo come header `Authorization: Bearer
-  <token>` a ogni chiamata verso `/documents` e `/ask`.
-- Dopo l'upload, il frontend dovrà fare polling su
-  `GET /documents/{id}` (ad es. ogni 2 secondi) finché lo stato non è
-  `"ready"` o `"error"`, per mostrare all'utente quando il documento è
-  pronto da interrogare.
-- Se il frontend gira su un dominio diverso dall'API, andrà configurato
-  CORS in `src/api/main.py` (FastAPI ha `CORSMiddleware` pronto
-  all'uso) — non è ancora presente in questo progetto perché non
-  serve finché testi con curl/Swagger.
+Il frontend (TanStack Start, cartella separata `frontend/` con il proprio
+deploy) fa esattamente questo:
+
+- Salva il token JWT ricevuto da `/auth/login` o `/auth/register` in
+  `localStorage` e lo allega come header `Authorization: Bearer <token>`
+  a ogni chiamata verso `/documents` e `/ask` (vedi `frontend/src/lib/api.ts`).
+- Dopo l'upload, fa polling su `GET /documents` ogni 2 secondi finché
+  nessun documento è più `"processing"` (vedi
+  `frontend/src/components/document-list.tsx`), per mostrare quando un
+  documento è pronto da interrogare.
+- CORS è configurato in `src/api/main.py` tramite `CORSMiddleware`,
+  con le origini permesse lette dalla variabile d'ambiente
+  `ORIGINI_CONSENTITE` (lista separata da virgole, default
+  `http://localhost:3000`). **Su Coolify va impostata al dominio reale
+  del frontend deployato**, altrimenti il browser blocca le richieste.
 
 ---
 

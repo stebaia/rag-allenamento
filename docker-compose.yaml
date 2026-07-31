@@ -13,6 +13,7 @@ services:
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       JWT_SECRET: ${JWT_SECRET}
+      ORIGINI_CONSENTITE: ${ORIGINI_CONSENTITE:-http://localhost:3000}
       QDRANT_URL: http://qdrant:6333
       DB_PATH: /data/app.db
       CARTELLA_UPLOAD: /data/uploads

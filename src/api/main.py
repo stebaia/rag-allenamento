@@ -6,10 +6,12 @@ all'avvio del server. È anche il file che passiamo a uvicorn per far
 partire il server (vedi il comando nel Dockerfile e nel tutorial).
 """
 
+import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 # load_dotenv() legge il file .env nella cartella corrente e imposta le
 # variabili trovate come variabili d'ambiente del processo (le stesse lette
@@ -45,6 +47,25 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="RAG Allenamento API", lifespan=lifespan)
+
+# Il frontend gira su un dominio diverso da questa API (deploy separato su
+# Coolify), quindi il browser blocca le richieste finché non abilitiamo
+# esplicitamente CORS. ORIGINI_CONSENTITE viene da una variabile d'ambiente
+# (lista separata da virgole) per poter puntare al dominio giusto in
+# produzione senza modificare il codice.
+origini_consentite = [
+    origine.strip()
+    for origine in os.environ.get("ORIGINI_CONSENTITE", "http://localhost:3000").split(",")
+    if origine.strip()
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origini_consentite,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Ogni router porta con sé il proprio "prefix" (es. /auth), quindi qui
 # basta agganciarli tutti all'app principale.
