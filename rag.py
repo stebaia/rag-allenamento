@@ -5,7 +5,7 @@ import chromadb, hashlib
 from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
 
-os.environ["OPENAI_API_KEY"] = "***RIMOSSA***"
+os.environ["OPENAI_API_KEY"] = ""
 CARTELLA = "documenti"
 KEEP_COMPACT = ("spesa", "lista", "shopping", "grocery")
 
