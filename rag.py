@@ -5,7 +5,8 @@ import chromadb, hashlib
 from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
 
-os.environ["OPENAI_API_KEY"] = ""
+# La chiave va impostata nell'ambiente (es. `export OPENAI_API_KEY=...` o file .env),
+# MAI scritta qui in chiaro: questo file finisce facilmente in un repository condiviso.
 CARTELLA = "documenti"
 KEEP_COMPACT = ("spesa", "lista", "shopping", "grocery")
 
