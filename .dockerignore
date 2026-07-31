@@ -1,0 +1,11 @@
+.venv
+.venv_test
+__pycache__
+*.pyc
+.env
+chroma_db
+chroma_lc
+uploads
+app.db
+documenti
+.git

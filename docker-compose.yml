@@ -1,0 +1,28 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+    ports:
+      - "6333:6333"
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - qdrant
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      QDRANT_URL: http://qdrant:6333
+      DB_PATH: /data/app.db
+      CARTELLA_UPLOAD: /data/uploads
+    volumes:
+      - app_data:/data
+    ports:
+      - "8000:8000"
+
+volumes:
+  qdrant_data:
+  app_data:
