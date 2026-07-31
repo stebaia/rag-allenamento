@@ -14,13 +14,15 @@ degli alias (SessionDep, UtenteCorrente) così negli endpoint scriviamo solo
 ogni volta — pura leggibilità, il comportamento è identico.
 """
 
+import secrets
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlmodel import Session
 
 from rag.auth import decodifica_access_token
+from rag.config import ALEXA_API_KEY, ALEXA_USER_ID
 from rag.db import Utente, get_session
 
 # OAuth2PasswordBearer è una utility di FastAPI che: 1) sa estrarre il
@@ -64,3 +66,32 @@ def utente_corrente(
 # parametro riceve automaticamente l'oggetto Utente già autenticato, o la
 # richiesta viene rifiutata con 401 PRIMA che il codice dell'endpoint parta.
 UtenteCorrente = Annotated[Utente, Depends(utente_corrente)]
+
+
+def verifica_alexa_api_key(x_api_key: Annotated[str | None, Header()] = None) -> str:
+    """Dependency di autenticazione per la skill Alexa: nessun JWT, nessun
+    login. La Lambda della skill manda una chiave segreta fissa nell'header
+    `X-Api-Key`, qui la confrontiamo con quella configurata in ambiente.
+
+    Alexa non ha un concetto di "utente che fa login": la skill la usa una
+    persona sola, quindi invece di autenticare un Utente del database
+    ritorniamo direttamente l'id fisso (ALEXA_USER_ID) a cui vanno
+    associate tutte le domande poste tramite la skill.
+    """
+    if not ALEXA_API_KEY or not ALEXA_USER_ID:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Skill Alexa non configurata (ALEXA_API_KEY/ALEXA_USER_ID mancanti)",
+        )
+    # `secrets.compare_digest` invece di `==`: confronta le stringhe in un
+    # tempo costante indipendente da quanti caratteri coincidono, per non
+    # dare a un attaccante informazioni utili misurando i tempi di risposta
+    # (attacco a "timing side-channel").
+    if not x_api_key or not secrets.compare_digest(x_api_key, ALEXA_API_KEY):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Chiave API non valida")
+    return ALEXA_USER_ID
+
+
+# Alias riusabile per l'endpoint della skill Alexa: chi lo dichiara come
+# parametro riceve direttamente lo user_id fisso associato alla skill.
+AlexaUserId = Annotated[str, Depends(verifica_alexa_api_key)]

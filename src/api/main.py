@@ -25,7 +25,7 @@ load_dotenv()
 
 from rag.db import init_db  # noqa: E402 - va importato dopo load_dotenv
 
-from .routers import ask, auth, documents  # noqa: E402
+from .routers import alexa, ask, auth, documents  # noqa: E402
 from .state import get_embeddings  # noqa: E402
 
 
@@ -72,6 +72,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(documents.router)
 app.include_router(ask.router)
+app.include_router(alexa.router)
 
 
 @app.get("/health")

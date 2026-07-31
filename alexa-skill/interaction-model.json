@@ -1,0 +1,46 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "assistente allenamento",
+      "intents": [
+        {
+          "name": "AMAZON.CancelIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.HelpIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.StopIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.FallbackIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.NavigateHomeIntent",
+          "samples": []
+        },
+        {
+          "name": "ChiediIntent",
+          "slots": [
+            {
+              "name": "domanda",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
+          "samples": [
+            "{domanda}",
+            "chiedi {domanda}",
+            "dimmi {domanda}",
+            "dimmi di {domanda}",
+            "sapresti dirmi {domanda}",
+            "vorrei sapere {domanda}"
+          ]
+        }
+      ]
+    }
+  }
+}

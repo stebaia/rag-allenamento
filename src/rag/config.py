@@ -43,3 +43,11 @@ CARTELLA_UPLOAD = os.environ.get("CARTELLA_UPLOAD", "uploads")
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = int(os.environ.get("JWT_EXPIRE_MINUTES", "60"))
+
+# --- Skill Alexa: la Lambda della skill chiama il nostro endpoint /alexa/ask
+# con una chiave segreta condivisa (niente JWT: Alexa non fa login). Stesso
+# principio di JWT_SECRET: nessun default reale, deve essere impostata a
+# mano nell'ambiente. ALEXA_USER_ID è l'utente RAG a cui associare tutte le
+# domande fatte tramite la skill (la usi solo tu, quindi è fissa).
+ALEXA_API_KEY = os.environ.get("ALEXA_API_KEY", "")
+ALEXA_USER_ID = os.environ.get("ALEXA_USER_ID", "")
