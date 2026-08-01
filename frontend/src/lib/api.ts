@@ -108,10 +108,15 @@ export interface RispostaOut {
   risposta: string
 }
 
-export function ask(domanda: string) {
+export interface MessaggioStorico {
+  ruolo: 'user' | 'assistant'
+  contenuto: string
+}
+
+export function ask(domanda: string, storico: Array<MessaggioStorico> = []) {
   return request<RispostaOut>('/ask', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ domanda }),
+    body: JSON.stringify({ domanda, storico }),
   })
 }

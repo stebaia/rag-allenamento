@@ -60,11 +60,41 @@ def risolvi_sessioni_relative(domanda: str) -> str:
     return _SESSIONE_RELATIVA_RE.sub(_sostituisci, domanda)
 
 
+def riformula_con_storico(llm, domanda: str, storico: list[dict]) -> str:
+    """Riscrive una domanda ellittica ('e nella giornata a?') in una domanda
+    autonoma, usando gli ultimi scambi della conversazione come contesto.
+
+    Serve PRIMA del retrieval: il RetrieverIbrido (vedi rag/vectorstore.py)
+    cerca solo le parole/il significato della domanda che riceve, senza
+    alcuna nozione di "conversazione" — se l'utente scrive "e cosa mangio in
+    quella giornata?" senza questo passaggio il retriever cercherebbe alla
+    lettera "quella giornata", senza sapere a cosa si riferisce. Se non c'è
+    storico (prima domanda della chat), non c'è nulla da riformulare.
+    """
+    if not storico:
+        return domanda
+
+    scambi = "\n".join(f"{m['ruolo']}: {m['contenuto']}" for m in storico)
+    nuova = llm.invoke(
+        "Questa è una conversazione tra un utente e un assistente su dieta e "
+        "allenamento. Riscrivi l'ULTIMA domanda dell'utente come domanda "
+        "autonoma e completa, esplicitando ciò a cui si riferisce implicitamente "
+        "(es. un giorno, una sessione, un piano citati prima nella conversazione). "
+        "Se la domanda è già autonoma, restituiscila invariata. Rispondi SOLO con "
+        "la domanda riscritta, senza introduzioni.\n\n"
+        f"CONVERSAZIONE PRECEDENTE:\n{scambi}\n\n"
+        f"ULTIMA DOMANDA DELL'UTENTE: {domanda}"
+    ).content.strip()
+    print(f"   ↳ riformulata con lo storico: {nuova}")
+    return nuova
+
+
 class Stato(TypedDict):
     domanda: str
     documenti: list[Document]
     risposta: str
     tentativi: int
+    storico: str
 
 
 def costruisci_grafo(retriever, llm, prompt):
@@ -94,7 +124,12 @@ def costruisci_grafo(retriever, llm, prompt):
     def nodo_genera(stato: Stato):
         contesto = "\n\n".join(d.page_content for d in stato["documenti"])
         risposta = (prompt | llm | StrOutputParser()).invoke(
-            {"context": contesto, "question": stato["domanda"], "oggi": giorno_oggi()}
+            {
+                "context": contesto,
+                "question": stato["domanda"],
+                "oggi": giorno_oggi(),
+                "storico": stato.get("storico", ""),
+            }
         )
         return {"risposta": risposta}
 

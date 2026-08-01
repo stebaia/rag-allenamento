@@ -17,6 +17,7 @@ MODELLO_EMBED = "paraphrase-multilingual-MiniLM-L12-v2"  # locale, gratis
 MODELLO_LLM = "gpt-4o-mini"
 MODELLO_CONTESTO = os.environ.get("MODELLO_CONTESTO", "gpt-4o-mini")
 K = 5  # blocchi recuperati
+MAX_STORICO = 8  # messaggi di chat precedenti passati ad /ask come contesto
 
 # Nomi file che vengono trattati come liste (chunking compatto invece che per-pasto)
 KEEP_COMPACT = ("spesa", "lista", "shopping", "grocery")

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Loader2, Send, Sparkles, User } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError, ask } from '#/lib/api'
+import type { MessaggioStorico } from '#/lib/api'
 import { Button } from '#/components/ui/button'
 import { Textarea } from '#/components/ui/textarea'
 import { cn } from '#/lib/utils'
@@ -15,7 +16,8 @@ export function Chat() {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const mutation = useMutation({
-    mutationFn: ask,
+    mutationFn: ({ domanda, storico }: { domanda: string; storico: Array<MessaggioStorico> }) =>
+      ask(domanda, storico),
     onSuccess: (data) => {
       setMessages((prev) => [
         ...prev,
@@ -39,12 +41,20 @@ export function Chat() {
     const domanda = input.trim()
     if (!domanda || mutation.isPending) return
 
+    // Storico da mandare al backend: i messaggi già in chat PRIMA di questa
+    // domanda (il backend non conserva nessuno stato tra una richiesta e
+    // l'altra, vedi src/api/routers/ask.py).
+    const storico: Array<MessaggioStorico> = messages.map((m) => ({
+      ruolo: m.role,
+      contenuto: m.content,
+    }))
+
     setMessages((prev) => [
       ...prev,
       { id: crypto.randomUUID(), role: 'user', content: domanda },
     ])
     setInput('')
-    mutation.mutate(domanda)
+    mutation.mutate({ domanda, storico })
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {

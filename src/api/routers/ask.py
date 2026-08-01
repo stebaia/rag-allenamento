@@ -11,8 +11,8 @@ from fastapi import APIRouter
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 
-from rag.config import K
-from rag.graph import costruisci_grafo
+from rag.config import K, MAX_STORICO
+from rag.graph import costruisci_grafo, riformula_con_storico
 from rag.vectorstore import retriever_per_utente
 
 from ..deps import UtenteCorrente
@@ -30,15 +30,34 @@ router = APIRouter(tags=["ask"])
 # cercare nei documenti; qui ripetiamo l'informazione anche nel prompt così
 # l'LLM può rispondere in modo naturale (es. dire "oggi" invece del nome del
 # giorno) e risolvere correttamente riferimenti relativi impliciti.
+#
+# {storico}: gli scambi precedenti della conversazione (vuoto alla prima
+# domanda). Serve a dare continuità alle risposte (es. capire "e quella
+# giornata?" riferito a un giorno nominato prima) — il RECUPERO dei
+# documenti usa invece la domanda già riformulata in modo autonomo (vedi
+# riformula_con_storico), lo storico qui serve solo per il tono/riferimenti
+# della risposta finale.
 _PROMPT = ChatPromptTemplate.from_template(
     "Sei un assistente su dieta, spesa e allenamento. Oggi è {oggi}. Rispondi "
     "usando SOLO il contesto. Se l'informazione non c'è, dillo. Rispondi in "
-    "italiano, conciso.\n\nCONTESTO:\n{context}\n\nDOMANDA: {question}"
+    "italiano, conciso.\n\nCONVERSAZIONE PRECEDENTE:\n{storico}\n\n"
+    "CONTESTO:\n{context}\n\nDOMANDA: {question}"
 )
+
+
+class MessaggioIn(BaseModel):
+    ruolo: str  # "user" oppure "assistant"
+    contenuto: str
 
 
 class DomandaIn(BaseModel):
     domanda: str
+    # Cronologia della chat PRIMA di questa domanda (dal messaggio meno
+    # recente al più recente). Il frontend la costruisce dai messaggi già
+    # mostrati a schermo (vedi frontend/src/lib/chat-context.tsx) — il
+    # backend non conserva nessuno stato di conversazione tra una richiesta
+    # e l'altra, quindi è il client a doverla rimandare ogni volta.
+    storico: list[MessaggioIn] = []
 
 
 class RispostaOut(BaseModel):
@@ -59,9 +78,22 @@ def ask(payload: DomandaIn, utente: UtenteCorrente):
     # leggera (assembla solo delle funzioni), quindi non è uno spreco.
     grafo = costruisci_grafo(retriever, llm, _PROMPT)
 
+    # Teniamo solo gli ultimi MAX_STORICO messaggi: mandare tutta la chat
+    # ad ogni domanda farebbe crescere senza limite il costo (e la latenza)
+    # di ogni richiesta man mano che la conversazione si allunga.
+    storico = [m.model_dump() for m in payload.storico[-MAX_STORICO:]]
+
+    # PRIMA di cercare nei documenti, riscriviamo una domanda ellittica
+    # ("e quella giornata?") in una domanda autonoma che nomina esplicitamente
+    # a cosa si riferisce: il retriever (vedi rag/vectorstore.py) non ha
+    # nessuna nozione di conversazione, cerca solo le parole/il significato
+    # della stringa che riceve.
+    domanda = riformula_con_storico(llm, payload.domanda, storico)
+
     # `.invoke(...)` esegue il grafo dall'inizio alla fine e ritorna lo
     # stato finale come dizionario Python; ne leggiamo solo la chiave
     # "risposta" (le altre, come "documenti" e "tentativi", sono dettagli
     # interni del grafo che non servono a chi chiama l'API).
-    risultato = grafo.invoke({"domanda": payload.domanda, "tentativi": 0})
+    testo_storico = "\n".join(f"{m['ruolo']}: {m['contenuto']}" for m in storico)
+    risultato = grafo.invoke({"domanda": domanda, "tentativi": 0, "storico": testo_storico})
     return RispostaOut(risposta=risultato["risposta"])
