@@ -22,6 +22,7 @@ Concetti chiave di questo file:
 import math
 import re
 from collections import Counter
+from datetime import date
 
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
@@ -32,6 +33,8 @@ from qdrant_client.http import models as qmodels
 
 from .chunking import _GIORNO, _norm_giorno
 from .config import QDRANT_COLLECTION, QDRANT_URL
+
+_REVERSE_QUERY = re.compile(r"(?i)reverse\s*(\d+)")
 
 # Variabile "a livello di modulo": vive finché vive il processo Python, ed
 # è condivisa da tutte le richieste HTTP gestite da questo processo. La
@@ -101,6 +104,8 @@ def upsert_documento(
                 "document_id": document_id,
                 "fonte": c["fonte"],
                 "giorno": c.get("giorno", ""),
+                "reverse": c.get("reverse", ""),
+                "reverse_dal": c.get("reverse_dal", ""),
             },
         )
         for c in chunks
@@ -187,6 +192,46 @@ class RetrieverIbrido(BaseRetriever):
             condizioni += extra
         return qmodels.Filter(must=condizioni)
 
+    def _reverse_da_privilegiare(self, query: str, candidati) -> str | None:
+        """Determina quale settimana "Reverse N" usare per il boost sul giorno.
+
+        Un piano con più settimane (es. CONTEXTUAL_RETRIEVAL.md, "Piano
+        Reverse") ripete gli stessi nomi di giorno ("Lunedì") in ogni
+        settimana con macro diverse. Senza restringere il boost a UNA
+        settimana, una domanda come "cosa mangio lunedì?" recupererebbe tutti
+        i "lunedì" di tutte le settimane mescolati. Priorità:
+        1. la domanda nomina esplicitamente "Reverse N" -> usa quello;
+        2. altrimenti, tra i "reverse" visti nei candidati di questo utente,
+           usa quello con la data di inizio (reverse_dal) più recente non
+           successiva ad oggi (la settimana "in corso");
+        3. se oggi è PRIMA dell'inizio di ogni settimana nota (piano
+           caricato in anticipo, vedi es. CONTEXTUAL_RETRIEVAL.md), usa la
+           prima che deve ancora iniziare, così l'utente non resta senza
+           risposta solo perché la sua dieta non è ancora partita;
+        4. se nessun candidato ha metadati "reverse" (piano a settimana
+           singola, come nel resto del progetto), ritorna None e il boost
+           si comporta come prima.
+        """
+        match_esplicito = _REVERSE_QUERY.search(query)
+        if match_esplicito:
+            return match_esplicito.group(1)
+
+        oggi = date.today().isoformat()
+        migliori: dict[str, str] = {}  # numero reverse -> la sua data "dal"
+        for c in candidati:
+            meta = c.payload.get("metadata", {})
+            numero, dal = meta.get("reverse"), meta.get("reverse_dal")
+            if numero and dal:
+                migliori[numero] = dal
+
+        if not migliori:
+            return None
+
+        gia_iniziati = {n: d for n, d in migliori.items() if d <= oggi}
+        if gia_iniziati:
+            return max(gia_iniziati, key=gia_iniziati.get)
+        return min(migliori, key=migliori.get)
+
     def _get_relevant_documents(self, query: str, *, run_manager=None) -> list[Document]:
         """Punto d'ingresso richiesto da BaseRetriever: LangChain lo chiama
         internamente quando qualcuno invoca `retriever.invoke(query)`."""
@@ -239,15 +284,40 @@ class RetrieverIbrido(BaseRetriever):
         match_giorno = _GIORNO.search(query.lower())
         if match_giorno:
             giorno = _norm_giorno(match_giorno.group(0))
+            condizioni_extra = [qmodels.FieldCondition(key="metadata.giorno", match=qmodels.MatchValue(value=giorno))]
+
+            # Se il documento ha più settimane "Reverse N" (vedi
+            # rag/chunking.py), restringiamo il boost alla settimana giusta:
+            # altrimenti "lunedì" recupererebbe i "lunedì" di TUTTE le
+            # settimane insieme, mescolando macro/alimenti diversi.
+            reverse_target = self._reverse_da_privilegiare(query, candidati)
+            if reverse_target:
+                condizioni_extra.append(
+                    qmodels.FieldCondition(key="metadata.reverse", match=qmodels.MatchValue(value=reverse_target))
+                )
+
             punti_giorno = self._client.scroll(
                 collection_name=QDRANT_COLLECTION,
-                scroll_filter=self._filtro_utente(
-                    extra=[qmodels.FieldCondition(key="metadata.giorno", match=qmodels.MatchValue(value=giorno))]
-                ),
+                scroll_filter=self._filtro_utente(extra=condizioni_extra),
                 limit=100,
                 with_payload=True,
             )[0]  # scroll ritorna (punti, offset_successivo); qui ci basta il primo
             chunk_giorno = list(punti_giorno)
+
+            # Fallback: se il filtro sul reverse non trova nulla (es. il
+            # giorno citato non esiste in quella settimana specifica, o i
+            # dati sono incompleti), ripetiamo la ricerca senza quel filtro
+            # invece di lasciare l'utente senza risposta.
+            if not chunk_giorno and reverse_target:
+                punti_giorno = self._client.scroll(
+                    collection_name=QDRANT_COLLECTION,
+                    scroll_filter=self._filtro_utente(
+                        extra=[qmodels.FieldCondition(key="metadata.giorno", match=qmodels.MatchValue(value=giorno))]
+                    ),
+                    limit=100,
+                    with_payload=True,
+                )[0]
+                chunk_giorno = list(punti_giorno)
 
         id_giorno = {p.id for p in chunk_giorno}
         altri = [p for p, _ in risultati if p.id not in id_giorno]

@@ -10,9 +10,16 @@ _PASTO = re.compile(r"(?=(?:Colazione|Pranzo|Spuntino serale|Spuntino|Cena)\b)")
 _HEADER = re.compile(
     r"(?=(?:[A-E]\s*[\x7f•·]\s*(?:Luned|Marted|Mercoled|Gioved|Venerd))"  # giorni dieta
     r"|(?:SESSIONE\s*\d)"  # sedute allenamento
+    r"|(?:Reverse\s*\d)"  # settimane di un piano "reverse diet" a target crescente
     r"|(?:Note generali)|(?:Indicazioni\b)|(?:Note e terminologia))"
 )
 _MEAL = re.compile(r"^(Colazione|Pranzo|Spuntino serale|Spuntino|Cena)\b[^\d]*?(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)$")
+
+# Piani con più settimane a target crescente, es. "Reverse 1 — dal 03/08/2026":
+# il numero e la data segnano quale blocco di giorni appartiene a quale
+# settimana. Senza tracciarli, un chunk "Lunedì" non si distinguerebbe da un
+# "Lunedì" di un'altra settimana con macro diverse (vedi CONTEXTUAL_RETRIEVAL.md).
+_REVERSE_HEADER = re.compile(r"(?i)^Reverse\s*(\d+)\s*[—-]\s*dal\s*(\d{2})/(\d{2})/(\d{4})")
 
 # --- Sedute di allenamento (tabelle esercizio/serie×rep/recupero/focus) ---
 _SESSIONE_START = re.compile(r"^SESSIONE\s*\d")
@@ -36,21 +43,45 @@ def chunk_documento(doc: dict) -> list[dict]:
     records = []
     if any(k in nome for k in KEEP_COMPACT):
         for p in split_ricorsivo(doc["testo"], max_caratteri=1500):
-            records.append({"testo": p, "fonte": doc["fonte"], "giorno": ""})
+            records.append({"testo": p, "fonte": doc["fonte"], "giorno": "", "reverse": "", "reverse_dal": ""})
     else:
+        # Numero e data d'inizio del blocco "Reverse N" attualmente in corso
+        # di lettura: split_strutturato produce anche un blocco che INIZIA
+        # con l'header "Reverse N — dal ...", quindi lo intercettiamo qui e
+        # lo applichiamo a tutti i blocchi (giorni) successivi, finché non
+        # incontriamo il prossimo header "Reverse".
+        reverse_corrente, reverse_dal_corrente = "", ""
         for blocco in split_strutturato(doc["testo"]):
+            r = _REVERSE_HEADER.match(blocco)
+            if r:
+                reverse_corrente = r.group(1)
+                reverse_dal_corrente = f"{r.group(4)}-{r.group(3)}-{r.group(2)}"  # ISO: AAAA-MM-GG
+
             g = _GIORNO.search(blocco[:20])
             if g:
                 giorno = _norm_giorno(g.group(0))
                 for p in split_pasti(blocco):
-                    records.append({"testo": p, "fonte": doc["fonte"], "giorno": giorno})
+                    # Anteponiamo "Reverse N" anche al TESTO del chunk (non
+                    # solo al metadato): sia perché la ricerca lessicale del
+                    # RetrieverIbrido cerca parole nel testo, sia perché
+                    # l'LLM finale legge solo il testo, non i metadati.
+                    testo = f"Reverse {reverse_corrente} — {p}" if reverse_corrente else p
+                    records.append(
+                        {
+                            "testo": testo,
+                            "fonte": doc["fonte"],
+                            "giorno": giorno,
+                            "reverse": reverse_corrente,
+                            "reverse_dal": reverse_dal_corrente,
+                        }
+                    )
             elif _SESSIONE_START.match(blocco):
                 for p in split_sessione(blocco):
-                    records.append({"testo": p, "fonte": doc["fonte"], "giorno": ""})
+                    records.append({"testo": p, "fonte": doc["fonte"], "giorno": "", "reverse": "", "reverse_dal": ""})
             else:
                 pezzi = split_ricorsivo(blocco, 800) if len(blocco) > 1200 else [re.sub(r"\s+", " ", blocco)]
                 for p in pezzi:
-                    records.append({"testo": p, "fonte": doc["fonte"], "giorno": ""})
+                    records.append({"testo": p, "fonte": doc["fonte"], "giorno": "", "reverse": "", "reverse_dal": ""})
     return records
 
 
