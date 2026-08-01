@@ -23,12 +23,13 @@ from sqlmodel import Session, select
 
 from rag.chunking import chunk_documento
 from rag.config import CARTELLA_UPLOAD
+from rag.contextualize import contestualizza_documento
 from rag.db import Documento, StatoDocumento, get_session
 from rag.loaders import carica_file
 from rag.vectorstore import elimina_documento, upsert_documento
 
 from ..deps import SessionDep, UtenteCorrente
-from ..state import get_embeddings
+from ..state import get_embeddings, get_llm_contesto
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -46,7 +47,7 @@ class DocumentoOut(BaseModel):
 
 
 def _indicizza_documento(document_id: str, user_id: str, percorso: str) -> None:
-    """Eseguito in background: estrae testo, chunka, embedda, upserta su Qdrant, aggiorna lo stato.
+    """Eseguito in background: estrae testo, chunka, contestualizza, embedda, upserta su Qdrant, aggiorna lo stato.
 
     Questa funzione gira DOPO che la risposta HTTP dell'upload è già
     partita, quindi non possiamo riusare la `SessionDep` iniettata
@@ -68,6 +69,8 @@ def _indicizza_documento(document_id: str, user_id: str, percorso: str) -> None:
                 raise ValueError("Nessun testo estraibile dal file (forse un PDF scansionato)")
 
             chunks = chunk_documento(doc)
+            llm_contesto = get_llm_contesto()
+            chunks = contestualizza_documento(llm_contesto, doc["testo"], chunks)
             embeddings = get_embeddings()
             n = upsert_documento(embeddings, user_id, document_id, chunks)
 

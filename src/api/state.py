@@ -15,7 +15,13 @@ from functools import lru_cache
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
 
-from rag.config import MODELLO_EMBED, MODELLO_LLM
+from rag.config import MODELLO_CONTESTO, MODELLO_EMBED, MODELLO_LLM
+
+
+@lru_cache(maxsize=1)
+def get_llm_contesto() -> ChatOpenAI:
+    """LLM economico dedicato a generare il contesto dei chunk (vedi rag/contextualize.py)."""
+    return ChatOpenAI(model=MODELLO_CONTESTO, temperature=0)
 
 
 @lru_cache(maxsize=1)

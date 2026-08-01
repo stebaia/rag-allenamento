@@ -15,6 +15,7 @@ CARTELLA_DOCUMENTI = "documenti"
 CHROMA_PATH = "chroma_lc"
 MODELLO_EMBED = "paraphrase-multilingual-MiniLM-L12-v2"  # locale, gratis
 MODELLO_LLM = "gpt-4o-mini"
+MODELLO_CONTESTO = os.environ.get("MODELLO_CONTESTO", "gpt-4o-mini")
 K = 5  # blocchi recuperati
 
 # Nomi file che vengono trattati come liste (chunking compatto invece che per-pasto)
