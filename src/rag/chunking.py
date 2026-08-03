@@ -21,6 +21,21 @@ _MEAL = re.compile(r"^(Colazione|Pranzo|Spuntino serale|Spuntino|Cena)\b[^\d]*?(
 # "Lunedì" di un'altra settimana con macro diverse (vedi CONTEXTUAL_RETRIEVAL.md).
 _REVERSE_HEADER = re.compile(r"(?i)^Reverse\s*(\d+)\s*[—-]\s*dal\s*(\d{2})/(\d{2})/(\d{4})")
 
+# --- Lista della spesa (tabelle alimento/quantità/indicazioni per reparto) ---
+# Il PDF elenca ogni alimento come "■ Nome", seguito dalla quantità su una
+# riga e, opzionalmente, da un'indicazione ("1 confezione") che può
+# continuare sulla riga dopo. Il carattere \x7f è il bullet come lo
+# restituisce pypdf; accettiamo anche ■/•/- per non dipendere da come un
+# eventuale PDF futuro codifica lo stesso elenco.
+_SPESA_ALIMENTO = re.compile(r"^[\x7f■•·\-]\s*(.+)$")
+# Reparti del supermercato: fanno da titolo di sezione, e vale la pena
+# tenerli nel chunk (sapere che le patate sono in "Ortofrutta" è utile).
+_SPESA_REPARTO = re.compile(r"(?i)^(Dispensa|Banco frigo(?:\s*/\s*freschi)?|Ortofrutta|Freschi|Surgelati)\s*$")
+# Una quantità inizia sempre con una cifra (o un ≈/~ prima della cifra):
+# "12 fette", "200 g sgocciolato", "2,1–2,8 kg", "3 pz", "550 ml".
+_SPESA_QUANTITA = re.compile(r"^[≈~]?\s*\d")
+_SPESA_NOTE = re.compile(r"(?i)^Note\s*$")
+
 # --- Sedute di allenamento (tabelle esercizio/serie×rep/recupero/focus) ---
 _SESSIONE_START = re.compile(r"^SESSIONE\s*\d")
 _SESSIONE = re.compile(r"^SESSIONE\s*(\d+)\s*[—-]\s*(.+?)\s*$", re.MULTILINE)
@@ -38,12 +53,37 @@ def _norm_giorno(s: str) -> str:
     return s.lower().replace("ì", "i")
 
 
+def _record(testo: str, fonte: str, *, giorno: str = "", reverse: str = "", reverse_dal: str = "", tipo: str = "") -> dict:
+    """Un chunk con tutti i metadati usati dal retriever.
+
+    Tenerlo in una funzione sola garantisce che ogni chunk abbia ESATTAMENTE
+    le stesse chiavi: `upsert_documento` le legge con `c.get(...)`, quindi una
+    chiave dimenticata in un ramo diventerebbe un metadato vuoto silenzioso.
+    `tipo` marca la categoria del documento ("spesa") per i boost mirati del
+    RetrieverIbrido.
+    """
+    return {
+        "testo": testo,
+        "fonte": fonte,
+        "giorno": giorno,
+        "reverse": reverse,
+        "reverse_dal": reverse_dal,
+        "tipo": tipo,
+    }
+
+
 def chunk_documento(doc: dict) -> list[dict]:
     nome = doc["fonte"].lower()
     records = []
     if any(k in nome for k in KEEP_COMPACT):
-        for p in split_ricorsivo(doc["testo"], max_caratteri=1500):
-            records.append({"testo": p, "fonte": doc["fonte"], "giorno": "", "reverse": "", "reverse_dal": ""})
+        # Un chunk per alimento, così una domanda su un singolo prodotto
+        # ("quante fette biscottate compro?") recupera la riga giusta invece
+        # di un blocco con 40 alimenti insieme. Se il PDF non ha la forma
+        # attesa (elenco con bullet), split_spesa non riconosce nulla e
+        # ricadiamo sullo split generico di prima.
+        pezzi = split_spesa(doc["testo"]) or split_ricorsivo(doc["testo"], max_caratteri=1500)
+        for p in pezzi:
+            records.append(_record(p, doc["fonte"], tipo="spesa"))
     else:
         # Numero e data d'inizio del blocco "Reverse N" attualmente in corso
         # di lettura: split_strutturato produce anche un blocco che INIZIA
@@ -67,21 +107,22 @@ def chunk_documento(doc: dict) -> list[dict]:
                     # l'LLM finale legge solo il testo, non i metadati.
                     testo = f"Reverse {reverse_corrente} — {p}" if reverse_corrente else p
                     records.append(
-                        {
-                            "testo": testo,
-                            "fonte": doc["fonte"],
-                            "giorno": giorno,
-                            "reverse": reverse_corrente,
-                            "reverse_dal": reverse_dal_corrente,
-                        }
+                        _record(
+                            testo,
+                            doc["fonte"],
+                            giorno=giorno,
+                            reverse=reverse_corrente,
+                            reverse_dal=reverse_dal_corrente,
+                            tipo="dieta",
+                        )
                     )
             elif _SESSIONE_START.match(blocco):
                 for p in split_sessione(blocco):
-                    records.append({"testo": p, "fonte": doc["fonte"], "giorno": "", "reverse": "", "reverse_dal": ""})
+                    records.append(_record(p, doc["fonte"], tipo="allenamento"))
             else:
                 pezzi = split_ricorsivo(blocco, 800) if len(blocco) > 1200 else [re.sub(r"\s+", " ", blocco)]
                 for p in pezzi:
-                    records.append({"testo": p, "fonte": doc["fonte"], "giorno": "", "reverse": "", "reverse_dal": ""})
+                    records.append(_record(p, doc["fonte"]))
     return records
 
 
@@ -103,6 +144,71 @@ def split_pasti(blocco: str) -> list[str]:
         else:
             out.append(f"{giorno} — {p}")  # es. riga dei totali giornalieri
     return out
+
+
+def split_spesa(testo: str) -> list[str]:
+    """Un chunk per alimento della lista della spesa, più uno per le note.
+
+    Trasforma la tabella "■ Fette biscottate / 12 fette / 1 confezione" nella
+    frase "Lista della spesa, dispensa: Fette biscottate — 12 fette (1
+    confezione)". Serve perché con un solo chunk-blob per tutta la lista
+    l'LLM riceve 40 alimenti mescolati e fatica a riportare la quantità
+    giusta del singolo alimento richiesto (vedi split_pasti per la stessa
+    idea applicata ai pasti).
+    """
+    righe = [r.strip() for r in testo.splitlines() if r.strip()]
+    out: list[str] = []
+    reparto = ""
+    corrente: dict | None = None
+    note: list[str] = []
+    in_note = False
+
+    def chiudi():
+        nonlocal corrente
+        if corrente:
+            out.append(_format_spesa(reparto, corrente))
+            corrente = None
+
+    for riga in righe:
+        if _SPESA_NOTE.match(riga):
+            chiudi()
+            in_note = True
+            continue
+        if in_note:
+            note.append(riga)
+            continue
+        if _SPESA_REPARTO.match(riga):
+            chiudi()
+            reparto = riga
+            continue
+        if _HEADER_TABELLA.match(riga):  # "Alimento"/"Quantità"/"Indicazioni"
+            continue
+
+        alimento = _SPESA_ALIMENTO.match(riga)
+        if alimento:
+            chiudi()
+            corrente = {"nome": alimento.group(1).strip(), "quantita": "", "indicazioni": []}
+        elif corrente is None:
+            continue  # intestazione del documento, prima del primo alimento
+        elif not corrente["quantita"] and _SPESA_QUANTITA.match(riga):
+            corrente["quantita"] = riga
+        else:
+            corrente["indicazioni"].append(riga)
+    chiudi()
+
+    if note:
+        out.append(f"Lista della spesa, note: {' '.join(note)}")
+    return out
+
+
+def _format_spesa(reparto: str, voce: dict) -> str:
+    testa = f"Lista della spesa, {reparto.lower()}" if reparto else "Lista della spesa"
+    riga = f"{testa}: {voce['nome']}"
+    if voce["quantita"]:
+        riga += f" — {voce['quantita']}"
+    if voce["indicazioni"]:
+        riga += f" ({' '.join(voce['indicazioni'])})"
+    return riga
 
 
 def split_sessione(blocco: str) -> list[str]:

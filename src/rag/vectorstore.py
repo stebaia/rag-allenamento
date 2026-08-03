@@ -36,6 +36,16 @@ from .config import QDRANT_COLLECTION, QDRANT_URL
 
 _REVERSE_QUERY = re.compile(r"(?i)reverse\s*(\d+)")
 
+# Domande che chiedono la LISTA DELLA SPESA. Hanno un problema specifico: le
+# parole della domanda ("spesa", "comprare") non compaiono nel testo dei
+# chunk dei singoli alimenti ("Fette biscottate — 12 fette"), quindi né la
+# ricerca lessicale né quella semantica li fanno emergere in modo affidabile
+# — soprattutto quando la domanda nomina anche un giorno e il boost sul
+# giorno riempie il contesto con la dieta. Riconosciamo l'intento e
+# recuperiamo esplicitamente i chunk della spesa, come già facciamo per i
+# giorni della settimana.
+_SPESA_QUERY = re.compile(r"(?i)\b(spesa|spese|comprare|compro|acquistare|acquisto|supermercato|carrello)\b")
+
 # Variabile "a livello di modulo": vive finché vive il processo Python, ed
 # è condivisa da tutte le richieste HTTP gestite da questo processo. La
 # usiamo per non aprire una nuova connessione di rete a Qdrant ad ogni
@@ -84,9 +94,7 @@ def ottieni_vectorstore(embeddings) -> QdrantVectorStore:
     )
 
 
-def upsert_documento(
-    embeddings, user_id: str, document_id: str, chunks: list[dict]
-) -> int:
+def upsert_documento(embeddings, user_id: str, document_id: str, chunks: list[dict]) -> int:
     """Embedda e inserisce i chunk di un documento, taggati con user_id/document_id. Ritorna il numero di chunk inseriti."""
     vectorstore = ottieni_vectorstore(embeddings)
     # Questa è una "list comprehension": un modo compatto di scrivere un
@@ -106,6 +114,7 @@ def upsert_documento(
                 "giorno": c.get("giorno", ""),
                 "reverse": c.get("reverse", ""),
                 "reverse_dal": c.get("reverse_dal", ""),
+                "tipo": c.get("tipo", ""),
             },
         )
         for c in chunks
@@ -176,8 +185,20 @@ class RetrieverIbrido(BaseRetriever):
     _k: int = PrivateAttr()
     _pool: int = PrivateAttr()
     _peso_lessicale: float = PrivateAttr()
+    _max_boost: int = PrivateAttr()
+    _min_altri: int = PrivateAttr()
 
-    def __init__(self, client, embeddings, user_id: str, k: int, pool: int = 40, peso_lessicale: float = 0.4):
+    def __init__(
+        self,
+        client,
+        embeddings,
+        user_id: str,
+        k: int,
+        pool: int = 40,
+        peso_lessicale: float = 0.4,
+        max_boost: int = 8,
+        min_altri: int = 4,
+    ):
         super().__init__()
         self._client = client
         self._embeddings = embeddings
@@ -185,6 +206,13 @@ class RetrieverIbrido(BaseRetriever):
         self._k = k
         self._pool = pool  # quanti candidati semantici considerare prima del rescoring
         self._peso_lessicale = peso_lessicale
+        # Tetto ai chunk del boost-giorno: una giornata alimentare sono ~6
+        # chunk, ma con due versioni dello stesso piano indicizzate
+        # diventano 12+ e riempirebbero da sole tutto il contesto.
+        self._max_boost = max_boost
+        # Posti garantiti ai migliori del ranking ibrido, per le domande che
+        # incrociano più documenti (vedi _unisci_giorno_e_ranking).
+        self._min_altri = min_altri
 
     def _filtro_utente(self, extra: list | None = None) -> qmodels.Filter:
         condizioni = [qmodels.FieldCondition(key="metadata.user_id", match=qmodels.MatchValue(value=self._user_id))]
@@ -231,6 +259,44 @@ class RetrieverIbrido(BaseRetriever):
         if gia_iniziati:
             return max(gia_iniziati, key=gia_iniziati.get)
         return min(migliori, key=migliori.get)
+
+    def _chunk_del_giorno(self, condizioni: list) -> list:
+        """Tutti i chunk dell'utente che soddisfano `condizioni` (max 100).
+
+        Usa `scroll` e non `query_points` perché qui non ci interessa
+        l'ordine per similarità: vogliamo TUTTI i chunk del giorno citato,
+        non i più vicini alla domanda. `scroll` ritorna la coppia
+        (punti, offset_successivo): a noi basta il primo elemento.
+        """
+        return list(
+            self._client.scroll(
+                collection_name=QDRANT_COLLECTION,
+                scroll_filter=self._filtro_utente(extra=condizioni),
+                limit=100,
+                with_payload=True,
+            )[0]
+        )
+
+    def _unisci_giorno_e_ranking(self, chunk_giorno: list, chunk_spesa: list, altri: list) -> list:
+        """Fonde i chunk "richiesti esplicitamente" con i migliori del ranking.
+
+        I chunk del giorno e quelli della spesa vanno in testa perché
+        rispondono a una parte esplicita della domanda (il giorno nominato, la
+        richiesta di fare la spesa). Di ognuno ne teniamo al massimo
+        `_max_boost`, e garantiamo comunque `_min_altri` posti ai migliori del
+        ranking ibrido: senza queste quote una domanda che incrocia due
+        documenti ("che spesa per la dieta di oggi?") riceverebbe solo il
+        primo dei due, perché i ~12 chunk del giorno riempirebbero da soli
+        tutto il contesto.
+        """
+        prioritari = chunk_giorno[: self._max_boost] + chunk_spesa[: self._max_boost]
+        if not prioritari:
+            return altri[: self._k]
+
+        # Il contesto è grande almeno quanto i chunk prioritari più la quota
+        # riservata, così il boost non toglie mai posti al ranking ibrido.
+        k_effettivo = max(self._k, len(prioritari) + self._min_altri)
+        return (prioritari + altri)[:k_effettivo]
 
     def _get_relevant_documents(self, query: str, *, run_manager=None) -> list[Document]:
         """Punto d'ingresso richiesto da BaseRetriever: LangChain lo chiama
@@ -284,46 +350,69 @@ class RetrieverIbrido(BaseRetriever):
         match_giorno = _GIORNO.search(query.lower())
         if match_giorno:
             giorno = _norm_giorno(match_giorno.group(0))
-            condizioni_extra = [qmodels.FieldCondition(key="metadata.giorno", match=qmodels.MatchValue(value=giorno))]
+            condizione_giorno = qmodels.FieldCondition(
+                key="metadata.giorno", match=qmodels.MatchValue(value=giorno)
+            )
 
             # Se il documento ha più settimane "Reverse N" (vedi
             # rag/chunking.py), restringiamo il boost alla settimana giusta:
             # altrimenti "lunedì" recupererebbe i "lunedì" di TUTTE le
             # settimane insieme, mescolando macro/alimenti diversi.
             reverse_target = self._reverse_da_privilegiare(query, candidati)
+            condizioni_extra = [condizione_giorno]
             if reverse_target:
                 condizioni_extra.append(
                     qmodels.FieldCondition(key="metadata.reverse", match=qmodels.MatchValue(value=reverse_target))
                 )
 
-            punti_giorno = self._client.scroll(
-                collection_name=QDRANT_COLLECTION,
-                scroll_filter=self._filtro_utente(extra=condizioni_extra),
-                limit=100,
-                with_payload=True,
-            )[0]  # scroll ritorna (punti, offset_successivo); qui ci basta il primo
-            chunk_giorno = list(punti_giorno)
+            chunk_giorno = self._chunk_del_giorno(condizioni_extra)
 
             # Fallback: se il filtro sul reverse non trova nulla (es. il
             # giorno citato non esiste in quella settimana specifica, o i
-            # dati sono incompleti), ripetiamo la ricerca senza quel filtro
+            # dati sono incompleti), ripetiamo la ricerca sul solo giorno
             # invece di lasciare l'utente senza risposta.
             if not chunk_giorno and reverse_target:
-                punti_giorno = self._client.scroll(
-                    collection_name=QDRANT_COLLECTION,
-                    scroll_filter=self._filtro_utente(
-                        extra=[qmodels.FieldCondition(key="metadata.giorno", match=qmodels.MatchValue(value=giorno))]
-                    ),
-                    limit=100,
-                    with_payload=True,
-                )[0]
-                chunk_giorno = list(punti_giorno)
+                chunk_giorno = self._chunk_del_giorno([condizione_giorno])
 
-        id_giorno = {p.id for p in chunk_giorno}
-        altri = [p for p, _ in risultati if p.id not in id_giorno]
+        # 4) Se la domanda chiede la spesa, recupera esplicitamente i chunk
+        # della lista della spesa. Senza questo, una domanda che INCROCIA i
+        # due documenti ("che spesa devo fare per la dieta di oggi?") riceve
+        # solo la dieta: le parole "spesa"/"comprare" non compaiono nel testo
+        # dei singoli alimenti, quindi il ranking ibrido non li fa emergere,
+        # e il boost sul giorno occupa il resto del contesto.
+        chunk_spesa = []
+        if _SPESA_QUERY.search(query):
+            chunk_spesa = self._chunk_del_giorno(
+                [qmodels.FieldCondition(key="metadata.tipo", match=qmodels.MatchValue(value="spesa"))]
+            )
+            # Ordinati per pertinenza, non nell'ordine in cui stanno nel PDF:
+            # ne teniamo solo `_max_boost`, e i primi del PDF (reparto
+            # "Dispensa") non sono quasi mai quelli che servono. Se la domanda
+            # nomina anche un giorno, la pertinenza è la sovrapposizione con
+            # gli alimenti dei pasti di quel giorno, così "che spesa per la
+            # dieta di lunedì?" fa emergere patate e pollo (nella cena di
+            # lunedì) invece dei primi alimenti in elenco.
+            riferimento = " ".join(p.payload.get("page_content", "") for p in chunk_giorno) or query
+            termini_riferimento = _tokenizza(riferimento)
+            chunk_spesa.sort(
+                key=lambda p: len(_tokenizza(p.payload.get("page_content", "")) & termini_riferimento),
+                reverse=True,
+            )
 
-        k_effettivo = max(self._k, len(chunk_giorno) + 2) if chunk_giorno else self._k
-        scelti = (chunk_giorno + altri)[:k_effettivo]
+        id_prioritari = {p.id for p in chunk_giorno} | {p.id for p in chunk_spesa}
+        altri = [p for p, _ in risultati if p.id not in id_prioritari]
+
+        # Il boost sul giorno può essere MOLTO grande: una giornata alimentare
+        # sono ~6 chunk, e se l'utente ha indicizzato più versioni dello
+        # stesso piano si moltiplicano (12 chunk per "lunedì" con due piani).
+        # Prendendo solo `(chunk_giorno + altri)[:k]` quei chunk occuperebbero
+        # tutti i posti tranne due, e una domanda che INCROCIA due documenti
+        # ("che spesa devo fare per la dieta di oggi?") si ritroverebbe senza
+        # i chunk del secondo documento: sono pertinenti per il ranking
+        # ibrido, ma non hanno il metadato `giorno` e finiscono in coda.
+        # Riserviamo quindi una quota fissa ai migliori del ranking ibrido,
+        # indipendentemente da quanto è grande il boost.
+        scelti = self._unisci_giorno_e_ranking(chunk_giorno, chunk_spesa, altri)
 
         return [
             Document(

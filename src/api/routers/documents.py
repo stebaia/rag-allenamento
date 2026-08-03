@@ -107,8 +107,13 @@ async def carica_documento(
     session: SessionDep,
 ):
     """Riceve un file, lo salva su disco, crea il record 'processing' e schedula l'indicizzazione."""
-    estensione = os.path.splitext(file.filename or "")[1].lower()
+    nome_file = file.filename or ""
+    estensione = os.path.splitext(nome_file)[1].lower()
     if estensione not in ESTENSIONI_VALIDE:
+        # Copre anche il caso di un upload senza nome file: `splitext("")[1]`
+        # è la stringa vuota, che non è tra le estensioni valide. Da qui in
+        # poi `nome_file` è garantito non vuoto (la colonna `nome_file` in
+        # db.py non ammette NULL).
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Sono supportati solo file PDF e TXT")
 
     os.makedirs(CARTELLA_UPLOAD, exist_ok=True)
@@ -125,11 +130,21 @@ async def carica_documento(
     documento = Documento(
         id=document_id,
         user_id=utente.id,
-        nome_file=file.filename,
+        nome_file=nome_file,
         stato=StatoDocumento.PROCESSING,
     )
     session.add(documento)
-    session.commit()
+    try:
+        session.commit()
+    except Exception:
+        # Se la riga non entra nel database, il file appena scritto non
+        # sarebbe più raggiungibile da nessuno (nessun record lo nomina) e
+        # resterebbe a occupare spazio per sempre: lo rimuoviamo subito
+        # invece di lasciare un orfano su disco.
+        session.rollback()
+        if os.path.exists(percorso):
+            os.remove(percorso)
+        raise
     session.refresh(documento)
 
     # Questo NON esegue subito _indicizza_documento: la registra per essere

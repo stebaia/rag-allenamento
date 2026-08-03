@@ -40,7 +40,17 @@ router = APIRouter(tags=["ask"])
 _PROMPT = ChatPromptTemplate.from_template(
     "Sei un assistente su dieta, spesa e allenamento. Oggi è {oggi}. Rispondi "
     "usando SOLO il contesto. Se l'informazione non c'è, dillo. Rispondi in "
-    "italiano, conciso.\n\nCONVERSAZIONE PRECEDENTE:\n{storico}\n\n"
+    "italiano, conciso.\n\n"
+    # Il contesto può contenere chunk di DUE documenti diversi (la dieta di un
+    # giorno e la lista della spesa, vedi il boost in rag/vectorstore.py).
+    # Senza questa istruzione l'LLM tende a rispondere solo col primo e a
+    # elencare gli alimenti del pasto invece delle quantità da comprare.
+    "Se la domanda riguarda la spesa, riporta le quantità e le indicazioni "
+    "della LISTA DELLA SPESA (es. '1 confezione'), non i grammi dei pasti "
+    "del piano alimentare: sono due cose diverse. Se nel contesto trovi sia "
+    "i pasti sia le voci della lista della spesa, incrociali e indica cosa "
+    "comprare per gli alimenti di quei pasti.\n\n"
+    "CONVERSAZIONE PRECEDENTE:\n{storico}\n\n"
     "CONTESTO:\n{context}\n\nDOMANDA: {question}"
 )
 

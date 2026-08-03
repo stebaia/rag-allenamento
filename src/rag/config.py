@@ -10,9 +10,8 @@ linguaggio) segnalano "questo valore non cambia durante l'esecuzione".
 
 import os
 
-# --- Parametri "storici" del progetto RAG (usati anche da cli.py/rag.py) ---
-CARTELLA_DOCUMENTI = "documenti"
-CHROMA_PATH = "chroma_lc"
+# --- Parametri del progetto RAG (usati da cli.py e da src/api) ---
+CARTELLA_DOCUMENTI = "documenti"  # cartella letta dalla CLI (vedi cli.py)
 MODELLO_EMBED = "paraphrase-multilingual-MiniLM-L12-v2"  # locale, gratis
 MODELLO_LLM = "gpt-4o-mini"
 MODELLO_CONTESTO = os.environ.get("MODELLO_CONTESTO", "gpt-4o-mini")

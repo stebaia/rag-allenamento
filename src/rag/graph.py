@@ -28,8 +28,15 @@ _RELATIVI_RE = re.compile(r"(?i)\b(dopodomani|domani|oggi|ieri)\b")
 # diverse) invece che per le parole esatte "Sessione 1" presenti nel testo
 # del chunk.
 _NUMERI_ORDINALI = {"primo": 1, "prima": 1, "secondo": 2, "seconda": 2, "terzo": 3, "terza": 3}
+# L'articolo/preposizione che precede l'ordinale viene CATTURATO (gruppo 1) e
+# riscritto al femminile: senza catturarlo produrremmo "come mi alleno
+# Sessione 1" (perdendo il "nella"), ma riportandolo tale e quale
+# produrremmo "il Sessione 1", perché "giorno"/"allenamento" sono maschili
+# mentre "Sessione" è femminile. La domanda riscritta finisce nel prompt
+# dell'LLM, quindi vale la pena che resti in italiano corretto.
+_ARTICOLO_FEMMINILE = {"il": "la", "la": "la", "del": "della", "della": "della", "nel": "nella", "nella": "nella"}
 _SESSIONE_RELATIVA_RE = re.compile(
-    r"(?i)\b(?:il|la|del|della|nel|nella)?\s*"
+    r"(?i)\b(?:(il|la|del|della|nel|nella)\s+)?"
     r"(primo|prima|secondo|seconda|terzo|terza)\s+(?:giorno|allenamento|sessione|seduta)\b"
     r"(?:\s+di\s+allenamento\b)?"
 )
@@ -52,11 +59,16 @@ def risolvi_giorni_relativi(domanda: str) -> str:
 
 
 def risolvi_sessioni_relative(domanda: str) -> str:
-    """Sostituisce 'primo/secondo/terzo giorno (di allenamento)' con 'Sessione N'."""
+    """Sostituisce 'primo/secondo/terzo giorno (di allenamento)' con 'Sessione N',
+    preservando l'articolo che lo precede ('nella prima sessione' ->
+    'nella Sessione 1')."""
 
     def _sostituisci(match: re.Match) -> str:
-        numero = _NUMERI_ORDINALI[match.group(1).lower()]
-        return f"Sessione {numero}"
+        articolo, ordinale = match.group(1), match.group(2)
+        numero = _NUMERI_ORDINALI[ordinale.lower()]
+        if not articolo:
+            return f"Sessione {numero}"
+        return f"{_ARTICOLO_FEMMINILE[articolo.lower()]} Sessione {numero}"
 
     return _SESSIONE_RELATIVA_RE.sub(_sostituisci, domanda)
 

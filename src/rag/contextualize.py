@@ -45,9 +45,12 @@ def contestualizza_chunk(llm, documento_completo: str, chunk: str) -> str:
 def contestualizza_documento(llm, testo_completo: str, chunks: list[dict]) -> list[dict]:
     """Applica contestualizza_chunk a tutti i chunk di un documento.
 
-    Ritorna una NUOVA lista di dict (stessa struttura di chunk_documento:
-    {"testo", "fonte", "giorno"}), con "testo" sostituito dalla versione
-    contestualizzata. Il documento completo viene passato identico ad ogni
+    Ritorna una NUOVA lista di dict con le stesse chiavi prodotte da
+    chunk_documento ("testo", "fonte", "giorno", "reverse", "reverse_dal"),
+    con solo "testo" sostituito dalla versione contestualizzata: `{**c, ...}`
+    copia tutte le altre chiavi così come sono, quindi i metadati usati dal
+    retriever (giorno/reverse) sopravvivono a questo passaggio.
+    Il documento completo viene passato identico ad ogni
     chiamata: è la parte che l'API di OpenAI mette in cache automaticamente
     quando supera una certa lunghezza, rendendo le chiamate 2, 3, ... N
     molto più economiche della prima.
