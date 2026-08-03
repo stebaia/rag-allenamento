@@ -21,15 +21,16 @@ _RELATIVI = {"dopodomani": 2, "domani": 1, "oggi": 0, "ieri": -1}
 _RELATIVI_RE = re.compile(r"(?i)\b(dopodomani|domani|oggi|ieri)\b")
 
 # Le schede di allenamento numerano gli allenamenti "Sessione 1/2/3" (vedi
-# rag/chunking.py, split_sessione), non "primo/secondo/terzo giorno". Stessa
-# situazione dei giorni della settimana: senza questa sostituzione, una
-# domanda come "come mi alleno il primo giorno" trova match solo per
-# similarità semantica generica (mischia pezzi di sessioni diverse) invece
-# che per le parole esatte "Sessione 1" presenti nel testo del chunk.
+# rag/chunking.py, split_sessione), non "primo/secondo/terzo giorno/sessione/
+# seduta". Stessa situazione dei giorni della settimana: senza questa
+# sostituzione, una domanda come "come mi alleno nella prima sessione" trova
+# match solo per similarità semantica generica (mischia pezzi di sessioni
+# diverse) invece che per le parole esatte "Sessione 1" presenti nel testo
+# del chunk.
 _NUMERI_ORDINALI = {"primo": 1, "prima": 1, "secondo": 2, "seconda": 2, "terzo": 3, "terza": 3}
 _SESSIONE_RELATIVA_RE = re.compile(
     r"(?i)\b(?:il|la|del|della|nel|nella)?\s*"
-    r"(primo|prima|secondo|seconda|terzo|terza)\s+(?:giorno|allenamento)\b"
+    r"(primo|prima|secondo|seconda|terzo|terza)\s+(?:giorno|allenamento|sessione|seduta)\b"
     r"(?:\s+di\s+allenamento\b)?"
 )
 
