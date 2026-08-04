@@ -16,7 +16,8 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
 import sqlite3
 from langgraph.checkpoint.sqlite import SqliteSaver
-from rag.config import CHECKPOINT_DB
+from langgraph.store.sqlite import SqliteStore
+from rag.config import CHECKPOINT_DB, STORE_DB
 
 from rag.config import MODELLO_CONTESTO, MODELLO_EMBED, MODELLO_LLM
 
@@ -37,6 +38,25 @@ def get_embeddings() -> HuggingFaceEmbeddings:
 def get_llm() -> ChatOpenAI:
     """Il client verso il modello linguistico OpenAI usato per generare le risposte."""
     return ChatOpenAI(model=MODELLO_LLM, temperature=0)
+
+
+@lru_cache(maxsize=1)
+def get_store() -> SqliteStore:
+    """Memoria a lungo termine, trasversale alle conversazioni.
+
+    Il tutorial (§3.1) parte da InMemoryStore per imparare l'API, ma quello si
+    perde a ogni riavvio: una memoria che dimentica non è una memoria. Qui
+    usiamo SqliteStore — stessa interfaccia put/get/search/delete, su disco.
+    Il file è separato da quello dei checkpoint: le conversazioni si possono
+    buttare, le memorie no.
+    """
+    # isolation_level=None: SqliteStore emette da sé i BEGIN/COMMIT. Senza
+    # questo, il modulo sqlite3 ne apre già una e si ottiene
+    # "cannot start a transaction within a transaction".
+    conn = sqlite3.connect(STORE_DB, check_same_thread=False, isolation_level=None)
+    store = SqliteStore(conn)
+    store.setup()  # crea le tabelle dello store se non esistono
+    return store
 
 
 @lru_cache(maxsize=1)

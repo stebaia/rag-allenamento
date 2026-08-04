@@ -113,10 +113,58 @@ export interface MessaggioStorico {
   contenuto: string
 }
 
-export function ask(domanda: string, storico: Array<MessaggioStorico> = []) {
-  return request<RispostaOut>('/ask', {
+export interface AskOut {
+  risposta: string
+  conversation_id: string
+  // Valorizzato quando il grafo si è sospeso con interrupt() in attesa di
+  // conferma; si riprende con resumeAsk().
+  in_attesa: { conferma_memoria?: string } | null
+}
+
+export function ask(
+  domanda: string,
+  conversationId: string | null,
+  agente = false,
+  confermaMemorie = false,
+) {
+  return request<AskOut>('/ask', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ domanda, storico }),
+    body: JSON.stringify({
+      domanda,
+      conversation_id: conversationId,
+      agente,
+      conferma_memorie: confermaMemorie,
+    }),
   })
+}
+
+export function resumeAsk(conversationId: string, risposta: string) {
+  return request<AskOut>('/ask/resume', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ conversation_id: conversationId, risposta }),
+  })
+}
+
+export interface MemoriaOut {
+  id: string
+  fatto: string
+}
+
+export function listMemories() {
+  return request<Array<MemoriaOut>>('/memorie')
+}
+
+export function deleteMemory(id: string) {
+  return request<void>(`/memorie/${id}`, { method: 'DELETE' })
+}
+
+export interface ConversazioneOut {
+  conversation_id: string
+  messaggi: Array<MessaggioStorico>
+}
+
+export function getConversation(conversationId: string) {
+  return request<ConversazioneOut>(`/conversations/${conversationId}`)
 }

@@ -17,6 +17,17 @@ services:
       QDRANT_URL: http://qdrant:6333
       DB_PATH: /data/app.db
       CARTELLA_UPLOAD: /data/uploads
+      # Sul volume, non nella working directory del container: altrimenti
+      # conversazioni e memorie si perderebbero a ogni redeploy.
+      CHECKPOINT_DB: /data/checkpoints.sqlite
+      STORE_DB: /data/store.sqlite
+      # Tracing LangSmith: se LANGSMITH_TRACING non è impostata resta spento
+      # e l'app funziona normalmente. LANGSMITH_ENDPOINT serve solo agli
+      # account sulla regione europea (il default punta agli Stati Uniti).
+      LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-rag-allenamento}
+      LANGSMITH_ENDPOINT: ${LANGSMITH_ENDPOINT:-}
     volumes:
       - app_data:/data
     expose:

@@ -741,21 +741,24 @@ giustifica da sola il checkpointer.
 
 ## Checklist finale
 
-- [ ] **F0** `langgraph-checkpoint-sqlite` installato e in `requirements.txt`
-- [ ] **F1** `add_messages` come reducer nello stato
-- [ ] **F1** `riformula` spostata **dentro** il grafo come nodo
-- [ ] **F1** `SqliteSaver` con costruttore diretto (non `from_conn_string`)
-- [ ] **F1** `thread_id` prefissato con `user_id`
-- [ ] **F1** Alexa usa il checkpointer → ha memoria per la prima volta
-- [ ] **F1** Test B passa (memoria sopravvive al riavvio)
-- [ ] **F2** Tool con docstring scritta per l'LLM
-- [ ] **F2** `ToolNode` + `tools_condition` con `messages_key` corretto
-- [ ] **F2** Confronto onesto agente vs deterministico
-- [ ] **F3** Store con namespace per utente
-- [ ] **F3** Test B passa (memoria visibile in una conversazione **nuova**)
-- [ ] **F3** Verificato il rischio del fatto sbagliato
-- [ ] **F4** Provati i `stream_mode`
-- [ ] **F4** `interrupt` + `Command(resume=...)`
+- [x] **F0** `langgraph-checkpoint-sqlite` installato e in `requirements.txt`
+- [x] **F1** `add_messages` come reducer nello stato
+- [x] **F1** `riformula` spostata **dentro** il grafo come nodo
+- [x] **F1** `SqliteSaver` con costruttore diretto (non `from_conn_string`)
+- [x] **F1** `thread_id` prefissato con `user_id`
+- [x] **F1** Alexa usa il checkpointer → ha memoria per la prima volta
+- [x] **F1** Test B passa (memoria sopravvive al riavvio)
+- [x] **F1** *bonus*: `conversationId` in `localStorage` + `GET /conversations/{id}`
+- [x] **F2** Tool con docstring scritta per l'LLM (`src/rag/tools.py`)
+- [x] **F2** `ToolNode` + `tools_condition` con `messages_key` corretto
+- [x] **F2** Confronto onesto agente vs deterministico (flag `agente` in `/ask`)
+- [x] **F3** Store con namespace per utente (`get_store()` in `api/state.py`)
+- [x] **F3** Test B passa (memoria visibile in una conversazione **nuova**)
+- [x] **F3** Verificato il rischio del fatto sbagliato
+- [x] **F3** *esercizio*: `GET /memorie` + `DELETE /memorie/{id}`
+- [x] **F4** Provati i `stream_mode` (`scripts/esplora_grafo.py`)
+- [x] **F4** `interrupt` + `Command(resume=...)` (`POST /ask/resume`)
+- [x] **F4** *bonus*: time travel con `get_state_history()`
 
 ## Se qualcosa non funziona
 

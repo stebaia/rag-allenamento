@@ -55,3 +55,8 @@ ALEXA_USER_ID = os.environ.get("ALEXA_USER_ID", "")
 
 CHECKPOINT_DB = os.environ.get("CHECKPOINT_DB", "checkpoints.sqlite")
 
+# Memoria a lungo termine (lo Store), tenuta separata dai checkpoint: sono due
+# assi diversi — i checkpoint sono per-conversazione e si possono buttare, le
+# memorie valgono per l'utente e devono sopravvivere.
+STORE_DB = os.environ.get("STORE_DB", "store.sqlite")
+

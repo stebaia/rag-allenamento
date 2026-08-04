@@ -11,6 +11,7 @@ La Lambda della skill si occupa di tutta la parte "Alexa Skills Kit"
 """
 
 from fastapi import APIRouter
+from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 
@@ -19,7 +20,7 @@ from rag.graph import costruisci_grafo
 from rag.vectorstore import retriever_per_utente
 
 from ..deps import AlexaUserId
-from ..state import get_embeddings, get_llm
+from ..state import get_checkpointer, get_embeddings, get_llm
 
 router = APIRouter(prefix="/alexa", tags=["alexa"])
 
@@ -46,11 +47,16 @@ class RispostaOut(BaseModel):
 
 @router.post("/ask", response_model=RispostaOut)
 def alexa_ask(payload: DomandaIn, user_id: AlexaUserId):
-    """Risponde a una domanda posta tramite la skill Alexa (utente fisso, no login)."""
     embeddings = get_embeddings()
     retriever = retriever_per_utente(embeddings, user_id, K)
     llm = get_llm()
-    grafo = costruisci_grafo(retriever, llm, _PROMPT)
+    grafo = costruisci_grafo(retriever, llm, _PROMPT, checkpointer=get_checkpointer())
 
-    risultato = grafo.invoke({"domanda": payload.domanda, "tentativi": 0})
+    # Thread fisso: la skill la usa una persona sola e non ha modo di gestire
+    # un id di conversazione. Una sola conversazione lunga è esattamente il
+    # comportamento che ci si aspetta da un assistente vocale.
+    config = {"configurable": {"thread_id": f"{user_id}:alexa"}}
+    risultato = grafo.invoke(
+        {"messaggi": [HumanMessage(content=payload.domanda)], "tentativi": 0}, config
+    )
     return RispostaOut(risposta=risultato["risposta"])

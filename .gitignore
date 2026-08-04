@@ -10,3 +10,19 @@ chroma_lc/
 
 # artefatto di build della Lambda Alexa (rigenerato da alexa-skill/build.sh)
 alexa-skill/build/
+
+# database applicativi: contengono dati reali (utenti, password hash,
+# conversazioni, memorie) e vengono ricreati vuoti al primo avvio
+app.db
+checkpoints.sqlite*
+store.sqlite*
+
+# file caricati dagli utenti
+uploads/
+
+# log di sviluppo (anche il symlink allo scratchpad)
+uvicorn.log
+
+# documenti personali e materiale protetto da copyright: restano in locale,
+# l'indice si rigenera caricandoli dall'app
+documenti/

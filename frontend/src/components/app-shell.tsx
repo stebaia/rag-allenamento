@@ -1,5 +1,5 @@
 import { Link, useRouterState } from '@tanstack/react-router'
-import { FileText, LogOut, MessageCircle, Sparkles } from 'lucide-react'
+import { Brain, FileText, LogOut, MessageCircle, Sparkles } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Button } from '#/components/ui/button'
 import { ThemeToggle } from '#/components/theme-toggle'
@@ -9,6 +9,7 @@ import { cn } from '#/lib/utils'
 const NAV_ITEMS = [
   { to: '/chat', label: 'Chat', icon: MessageCircle },
   { to: '/documents', label: 'Documenti', icon: FileText },
+  { to: '/memorie', label: 'Memorie', icon: Brain },
 ] as const
 
 export function AppShell({ children }: { children: ReactNode }) {

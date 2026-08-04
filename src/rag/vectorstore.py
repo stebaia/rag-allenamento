@@ -46,6 +46,17 @@ _REVERSE_QUERY = re.compile(r"(?i)reverse\s*(\d+)")
 # giorni della settimana.
 _SPESA_QUERY = re.compile(r"(?i)\b(spesa|spese|comprare|compro|acquistare|acquisto|supermercato|carrello)\b")
 
+# "spesa"/"spese" sono ambigui: valgono per la lista della spesa alimentare
+# ma anche per le spese di un procedimento, le spese condominiali, i costi in
+# un contratto. Se la domanda contiene uno di questi termini il dominio non è
+# quello alimentare, e il boost sulla spesa va soppresso: altrimenti si
+# infilano in testa al contesto gli alimenti del supermercato.
+_SPESA_ALTRO_DOMINIO = re.compile(
+    r"(?i)\b(debitor|creditor|contribuent|tribut|fiscal|giudizi|process|"
+    r"legal|ricorso|ingiunzion|notific|esecuzion|pignorament|ipotec|"
+    r"condominial|contratt|locazion|sentenz|cassazion|comma|codice civile|"
+    r"d\.?lgs|d\.?p\.?r)")
+
 # Variabile "a livello di modulo": vive finché vive il processo Python, ed
 # è condivisa da tutte le richieste HTTP gestite da questo processo. La
 # usiamo per non aprire una nuova connessione di rete a Qdrant ad ogni
@@ -381,7 +392,7 @@ class RetrieverIbrido(BaseRetriever):
         # dei singoli alimenti, quindi il ranking ibrido non li fa emergere,
         # e il boost sul giorno occupa il resto del contesto.
         chunk_spesa = []
-        if _SPESA_QUERY.search(query):
+        if _SPESA_QUERY.search(query) and not _SPESA_ALTRO_DOMINIO.search(query):
             chunk_spesa = self._chunk_del_giorno(
                 [qmodels.FieldCondition(key="metadata.tipo", match=qmodels.MatchValue(value="spesa"))]
             )

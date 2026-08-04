@@ -75,6 +75,18 @@ def _record(testo: str, fonte: str, *, giorno: str = "", reverse: str = "", reve
 def chunk_documento(doc: dict) -> list[dict]:
     nome = doc["fonte"].lower()
     records = []
+
+    # Documenti strutturati in capitoli/paragrafi numerati (normativa, manuali,
+    # contratti): riconosciuti dalla forma del testo, non dal nome del file.
+    # Va tentato PRIMA degli altri rami, che cercano giorni e pasti e su questi
+    # documenti non troverebbero nulla, ricadendo sul taglio a lunghezza fissa.
+    if not any(k in nome for k in KEEP_COMPACT):
+        paragrafi = split_paragrafi_numerati(doc["testo"])
+        if paragrafi:
+            return [
+                _record(p, doc["fonte"], tipo="documento") for p in paragrafi
+            ]
+
     if any(k in nome for k in KEEP_COMPACT):
         # Un chunk per alimento, così una domanda su un singolo prodotto
         # ("quante fette biscottate compro?") recupera la riga giusta invece
@@ -309,6 +321,60 @@ def _format_esercizio(numero: str, nome_sessione: str, etichetta: str, es: dict)
         focus = re.sub(r"\s+", " ", " ".join(es["focus"])).strip()
         riga += f", focus {focus}"
     return riga
+
+
+# Documenti normativi/manualistici: "Capitolo IV", "3.2. Titolo", "3.2.1. ...".
+# Lo split su questi confini tiene insieme un paragrafo con il suo titolo,
+# invece di tagliare a metà di un ragionamento come farebbe split_ricorsivo.
+_PARAGRAFO_NUM = re.compile(r"(?m)(?=^(?:Capitolo\s+[IVXLC]+\s*$|\d+\.\d+(?:\.\d+)?\.\s+\S))")
+
+# Righe dell'indice: "1.1. Titolo ......... Pag. 7" oppure "... » 55". Sono
+# rumore puro per il retrieval — ripetono i titoli senza contenuto.
+_RIGA_INDICE = re.compile(
+    r"(?m)^.*?(?:\.{6,}\s*(?:Pag\.|»)?\s*\d*|\s»\s*\d+)\s*$"
+)
+
+# Un chunk che è solo un titolo (poche parole, nessuna frase) non risponde a
+# nessuna domanda: occupa un posto nel contesto senza portare informazione.
+_LUNGHEZZA_MINIMA_CHUNK = 200
+
+
+def split_paragrafi_numerati(testo: str, max_caratteri: int = 1200) -> list[str]:
+    """Split di testi strutturati in capitoli e paragrafi numerati.
+
+    Pensato per documenti normativi e manuali (contratti, guide operative):
+    la numerazione è il confine semantico naturale, molto meglio del taglio a
+    lunghezza fissa. I paragrafi troppo lunghi vengono comunque ridotti da
+    split_ricorsivo, che però parte da un blocco già coerente.
+
+    Ritorna [] se il testo non ha questa struttura, così il chiamante può
+    ricadere sullo split generico.
+    """
+    pulito = _RIGA_INDICE.sub("", testo)
+    parti = [p.strip() for p in _PARAGRAFO_NUM.split(pulito) if p.strip()]
+    # Un solo pezzo = la struttura non è stata riconosciuta.
+    if len(parti) < 2:
+        return []
+
+    # Scarta i residui dell'indice: pezzi troppo corti per contenere una frase
+    # compiuta (tipicamente il solo titolo del paragrafo).
+    parti = [p for p in parti if len(p) >= _LUNGHEZZA_MINIMA_CHUNK]
+    if not parti:
+        return []
+
+    chunk = []
+    for p in parti:
+        if len(p) <= max_caratteri:
+            chunk.append(re.sub(r"[ \t]+", " ", p))
+            continue
+        # Paragrafo lungo: lo spezziamo, ma ripetiamo il titolo in testa a
+        # ogni pezzo — senza, i pezzi dal secondo in poi perdono il contesto
+        # ("comma 3" senza sapere di quale articolo) e diventano irrecuperabili.
+        titolo = p.split("\n", 1)[0][:90]
+        for i, sotto in enumerate(split_ricorsivo(p, max_caratteri)):
+            testo_chunk = sotto if i == 0 else f"{titolo} (segue)\n{sotto}"
+            chunk.append(re.sub(r"[ \t]+", " ", testo_chunk))
+    return chunk
 
 
 def split_strutturato(testo: str) -> list[str]:

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import TypedDict
 
 from typing import Annotated
-from langchain_core.messages import AIMessage, AnyMessage
+from langchain_core.messages import AIMessage, AnyMessage, SystemMessage
 from langgraph.graph.message import add_messages
 
 from langchain_core.documents import Document
@@ -118,21 +118,6 @@ class Stato(TypedDict):
 
 def costruisci_grafo(retriever, llm, prompt, checkpointer = None):
     
-    def nodo_genera(stato: Stato):
-        contesto = "\n\n".join(d.page_content for d in stato["documenti"])
-        precedenti = stato["messaggi"][:-1]
-        testo_storico = "\n".join(f"{m.type}: {m.content}" for m in precedenti[-MAX_STORICO:])
-        risposta = (prompt | llm | StrOutputParser()).invoke({
-            "context": contesto,
-            "question": stato["domanda"],
-            "oggi": giorno_oggi(),
-            "storico": testo_storico,
-        })
-        # Il messaggio dell'assistente entra nello stato: al turno successivo
-        # sarà già lì, senza che nessun client lo rimandi.
-        return {"risposta": risposta, "messaggi": [AIMessage(content=risposta)]}
-    
-    
     def nodo_contestualizza(stato: Stato):
         precedenti = stato["messaggi"][:-1]  # esclude la domanda appena arrivata
         domanda = stato["messaggi"][-1].content
@@ -175,15 +160,24 @@ def costruisci_grafo(retriever, llm, prompt, checkpointer = None):
     # NODO: genera la risposta finale a partire dai documenti recuperati
     def nodo_genera(stato: Stato):
         contesto = "\n\n".join(d.page_content for d in stato["documenti"])
+        # Lo storico per il prompt viene dallo stato del grafo (ricaricato dal
+        # checkpointer), non da un campo mandato dal client. L'ultimo messaggio
+        # è la domanda corrente, che sta già in {question}: va esclusa.
+        precedenti = stato["messaggi"][:-1]
+        testo_storico = "\n".join(
+            f"{m.type}: {m.content}" for m in precedenti[-MAX_STORICO:]
+        )
         risposta = (prompt | llm | StrOutputParser()).invoke(
             {
                 "context": contesto,
                 "question": stato["domanda"],
                 "oggi": giorno_oggi(),
-                "storico": stato.get("storico", ""),
+                "storico": testo_storico,
             }
         )
-        return {"risposta": risposta}
+        # Il messaggio dell'assistente entra nello stato: al turno successivo
+        # sarà già lì, senza che nessun client lo rimandi.
+        return {"risposta": risposta, "messaggi": [AIMessage(content=risposta)]}
 
     # BIVIO: i documenti bastano? -> genera ; altrimenti -> riformula
     def decidi(stato: Stato):
@@ -200,15 +194,79 @@ def costruisci_grafo(retriever, llm, prompt, checkpointer = None):
 
     builder = StateGraph(Stato)
     builder.add_node("contestualizza", nodo_contestualizza)
-    builder.add_edge(START, "contestualizza")
-    builder.add_edge("contestualizza", "recupera")
+    builder.add_node("recupera", nodo_recupera)
     builder.add_node("riformula", nodo_riformula)
     builder.add_node("genera", nodo_genera)
 
-    builder.add_edge(START, "recupera")
+    # L'ingresso è contestualizza, non recupera: la domanda va prima resa
+    # autonoma usando lo storico, poi si cerca nei documenti.
+    builder.add_edge(START, "contestualizza")
+    builder.add_edge("contestualizza", "recupera")
     builder.add_conditional_edges(
         "recupera", decidi, {"genera": "genera", "riformula": "riformula"}
     )
     builder.add_edge("riformula", "recupera")  # ciclo: torna a recuperare
     builder.add_edge("genera", END)
     return builder.compile(checkpointer=checkpointer)
+
+
+def costruisci_grafo_agente(
+    retriever,
+    llm,
+    system_prompt: str,
+    checkpointer=None,
+    store=None,
+    user_id: str | None = None,
+    conferma_memorie: bool = False,
+):
+    """Variante agentica: l'LLM decide se e quante volte cercare.
+
+    Il ciclo `agente → tools → agente` è il pattern ReAct: il modello ragiona,
+    chiama un tool, legge il risultato, e decide se gli basta o se cercare
+    ancora. `tools_condition` è il bivio già pronto: guarda l'ultimo messaggio
+    e instrada verso "tools" se contiene una tool call, verso END altrimenti.
+
+    Se `user_id` è valorizzato viene aggiunto anche il tool `ricorda`, che
+    scrive nello store (memoria a lungo termine, trasversale ai thread).
+    Con `conferma_memorie=True` la scrittura passa da un nodo che sospende il
+    grafo con interrupt() e aspetta l'ok dell'utente.
+    """
+    from langgraph.prebuilt import ToolNode, tools_condition
+
+    from rag.tools import crea_tool_memoria, crea_tool_ricerca
+
+    tools = [crea_tool_ricerca(retriever)]
+    if user_id is not None:
+        tools.append(crea_tool_memoria(user_id, conferma=conferma_memorie))
+    # bind_tools: comunica al modello quali funzioni può chiamare. Senza questo
+    # l'LLM non sa che i tool esistono e risponde solo a parole.
+    llm_con_tools = llm.bind_tools(tools)
+
+    class StatoAgente(TypedDict):
+        messaggi: Annotated[list[AnyMessage], add_messages]
+
+    def nodo_agente(stato: StatoAgente, *, store=None):
+        testo = system_prompt.format(oggi=giorno_oggi())
+        # Le memorie si LEGGONO qui, non con un tool: iniettarle nel system
+        # prompt le rende sempre disponibili senza una chiamata in più.
+        if store is not None and user_id is not None:
+            memorie = store.search(("memorie", user_id), limit=10)
+            blocco = "\n".join(f"- {m.value['fatto']}" for m in memorie)
+            if blocco:
+                testo += f"\n\nCOSE CHE SAI SULL'UTENTE:\n{blocco}"
+        messaggi = [SystemMessage(content=testo)] + list(stato["messaggi"])
+        return {"messaggi": [llm_con_tools.invoke(messaggi)]}
+
+    builder = StateGraph(StatoAgente)
+    builder.add_node("agente", nodo_agente)
+    # messages_key: i prebuilt assumono che il campo si chiami "messages",
+    # il nostro si chiama "messaggi". È il prezzo delle convenzioni.
+    builder.add_node("tools", ToolNode(tools, messages_key="messaggi"))
+    builder.add_edge(START, "agente")
+    builder.add_conditional_edges(
+        "agente",
+        lambda s: tools_condition(s, messages_key="messaggi"),
+        {"tools": "tools", "__end__": END},
+    )
+    builder.add_edge("tools", "agente")  # torna all'agente col risultato
+    return builder.compile(checkpointer=checkpointer, store=store)
