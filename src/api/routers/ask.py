@@ -72,6 +72,14 @@ _PROMPT = ChatPromptTemplate.from_template(
     "indicazioni della LISTA DELLA SPESA (es. '1 confezione'), non i grammi "
     "dei pasti, che sono un'altra cosa; se trovi sia i pasti sia le voci "
     "della lista, incrociali e indica cosa comprare per quegli alimenti.\n\n"
+    # Lo storico serve a capire i riferimenti impliciti, non a decidere cosa
+    # sia rispondibile: senza questa avvertenza il modello imita le proprie
+    # risposte negative precedenti e continua a dire "non ho informazioni"
+    # anche quando il CONTESTO di questo turno contiene la risposta.
+    "La CONVERSAZIONE PRECEDENTE serve solo a capire a cosa si riferisce la "
+    "domanda. Valuta il CONTESTO di adesso da zero: se prima non avevi "
+    "saputo rispondere ma ora il contesto contiene l'informazione, "
+    "rispondi.\n\n"
     "CONVERSAZIONE PRECEDENTE:\n{storico}\n\n"
     "CONTESTO:\n{context}\n\nDOMANDA: {question}"
 )

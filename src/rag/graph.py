@@ -128,9 +128,18 @@ def costruisci_grafo(retriever, llm, prompt, checkpointer = None):
         nuova = llm.invoke(
             "Questa è una conversazione tra un utente e un assistente sui "
             "documenti personali dell'utente, di qualsiasi argomento. "
-            "allenamento. Riscrivi l'ULTIMA domanda dell'utente come domanda "
-            "autonoma e completa, esplicitando ciò a cui si riferisce implicitamente. "
-            "Se è già autonoma, restituiscila invariata. Rispondi SOLO con la domanda.\n\n"
+            "Riscrivi l'ULTIMA domanda dell'utente come domanda autonoma e "
+            "completa, esplicitando ciò a cui si riferisce implicitamente. "
+            "Se è già autonoma, restituiscila invariata. Rispondi SOLO con la "
+            "domanda.\n\n"
+            # Le risposte precedenti servono solo a sciogliere i riferimenti
+            # ("e a cena?" -> quale giorno). Senza questa riga, una serie di
+            # "non ho informazioni" convince il modello che l'argomento non
+            # sia nei documenti, e riscrive la domanda in una forma che il
+            # recupero non trova più: la conversazione si auto-avvelena.
+            "NON tenere conto del fatto che l'assistente non abbia saputo "
+            "rispondere prima: riscrivi comunque la domanda nel modo più "
+            "utile a cercarla nei documenti.\n\n"
             f"CONVERSAZIONE PRECEDENTE:\n{scambi}\n\n"
             f"ULTIMA DOMANDA: {domanda}"
         ).content.strip()
