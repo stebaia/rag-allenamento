@@ -121,8 +121,17 @@ def _contesto_per_chunk(testo_completo: str, chunk: str) -> str:
     )
 
 
-def contestualizza_chunk(llm, documento_completo: str, chunk: str) -> str:
+def contestualizza_chunk(
+    llm, documento_completo: str, chunk: str, capitolo: str = ""
+) -> str:
     """Genera 1-2 frasi di contesto per un chunk e le antepone al suo testo.
+
+    `capitolo`, quando lo conosciamo dal chunking, viene imposto all'LLM
+    invece di lasciarglielo dedurre: sui chunk in cui la finestra di contesto
+    non era ancorata, il modello ripiegava sull'inizio del documento e
+    scriveva "fa parte del Capitolo I" su materiale del capitolo VII. Quella
+    frase finisce nell'embedding e viene letta come vera dal modello che
+    risponde, quindi un errore qui inquina sia il recupero sia la risposta.
 
     Ritenta con attesa crescente sugli errori temporanei (tipicamente il 429
     per rate limit). Esaurititi i tentativi restituisce il chunk originale:
@@ -130,14 +139,23 @@ def contestualizza_chunk(llm, documento_completo: str, chunk: str) -> str:
     l'intero documento lo azzera.
     """
     documento = _contesto_per_chunk(documento_completo, chunk)
+    if capitolo:
+        chunk_per_prompt = (
+            f"[Questo chunk appartiene con certezza al Capitolo {capitolo}: "
+            f"NON attribuirlo a un altro capitolo.]\n{chunk}"
+        )
+    else:
+        chunk_per_prompt = chunk
     attesa = _ATTESA_INIZIALE
     for tentativo in range(_TENTATIVI):
         try:
             contesto = (
                 (_PROMPT | llm)
-                .invoke({"documento": documento, "chunk": chunk})
+                .invoke({"documento": documento, "chunk": chunk_per_prompt})
                 .content.strip()
             )
+            # Si concatena `chunk`, non `chunk_per_prompt`: l'annotazione sul
+            # capitolo serve solo a guidare l'LLM, non deve finire indicizzata.
             return f"{contesto}\n\n{chunk}"
         except Exception as e:
             if tentativo == _TENTATIVI - 1:
@@ -166,7 +184,12 @@ def contestualizza_documento(llm, testo_completo: str, chunks: list[dict]) -> li
         return []
 
     def contestualizza(c: dict) -> dict:
-        return {**c, "testo": contestualizza_chunk(llm, testo_completo, c["testo"])}
+        return {
+            **c,
+            "testo": contestualizza_chunk(
+                llm, testo_completo, c["testo"], capitolo=c.get("capitolo", "")
+            ),
+        }
 
     with ThreadPoolExecutor(max_workers=_PARALLELE) as pool:
         return list(pool.map(contestualizza, chunks))
