@@ -3,6 +3,7 @@ o split ricorsivo generico (liste della spesa e testi non strutturati)."""
 
 import re
 
+from .chunking_generico import split_generico
 from .config import KEEP_COMPACT
 
 _GIORNO = re.compile(r"(?i)(luned[ìi]|marted[ìi]|mercoled[ìi]|gioved[ìi]|venerd[ìi]|sabato|domenica)")
@@ -53,7 +54,7 @@ def _norm_giorno(s: str) -> str:
     return s.lower().replace("ì", "i")
 
 
-def _record(testo: str, fonte: str, *, giorno: str = "", reverse: str = "", reverse_dal: str = "", tipo: str = "", capitolo: str = "") -> dict:
+def _record(testo: str, fonte: str, *, giorno: str = "", reverse: str = "", reverse_dal: str = "", tipo: str = "", capitolo: str = "", titolo: str = "") -> dict:
     """Un chunk con tutti i metadati usati dal retriever.
 
     Tenerlo in una funzione sola garantisce che ogni chunk abbia ESATTAMENTE
@@ -69,9 +70,12 @@ def _record(testo: str, fonte: str, *, giorno: str = "", reverse: str = "", reve
         "reverse": reverse,
         "reverse_dal": reverse_dal,
         "tipo": tipo,
-        # Numero del capitolo per i documenti strutturati, "" per gli altri:
-        # permette al retriever di raccogliere tutti i pezzi di un capitolo.
+        # Riferimento della sezione per i documenti strutturati ("46",
+        # "2.1"), "" per gli altri: permette al retriever di raccogliere tutti
+        # i pezzi di un articolo o capitolo quando la domanda lo cita.
         "capitolo": capitolo,
+        # Intestazione leggibile, es. "Articolo 46 Nozione di veicolo".
+        "titolo": titolo,
     }
 
 
@@ -79,16 +83,29 @@ def chunk_documento(doc: dict) -> list[dict]:
     nome = doc["fonte"].lower()
     records = []
 
-    # Documenti strutturati in capitoli/paragrafi numerati (normativa, manuali,
-    # contratti): riconosciuti dalla forma del testo, non dal nome del file.
-    # Va tentato PRIMA degli altri rami, che cercano giorni e pasti e su questi
-    # documenti non troverebbero nulla, ricadendo sul taglio a lunghezza fissa.
-    if not any(k in nome for k in KEEP_COMPACT):
-        paragrafi = split_paragrafi_numerati(doc["testo"])
-        if paragrafi:
+    # Documenti di struttura ignota (normativa, manuali, contratti, circolari):
+    # split_generico riconosce da solo come sono divisi — per articoli, per
+    # paragrafi numerati o per capi — senza che serva una regola nuova a ogni
+    # documento caricato. Va tentato PRIMA dei rami dieta/spesa/allenamento,
+    # che cercano giorni e pasti e qui non troverebbero nulla.
+    #
+    # I documenti personali (KEEP_COMPACT e quelli con giorni della settimana)
+    # NON passano di qui: restano ai loro splitter su misura, che sono tarati
+    # meglio di qualsiasi euristica generica.
+    if not any(k in nome for k in KEEP_COMPACT) and not _GIORNO.search(
+        doc["testo"][:3000]
+    ):
+        generici = split_generico(doc["testo"])
+        if generici:
             return [
-                _record(p, doc["fonte"], tipo="documento", capitolo=cap)
-                for cap, p in paragrafi
+                _record(
+                    g["testo"],
+                    doc["fonte"],
+                    tipo="documento",
+                    capitolo=g["sezione"],
+                    titolo=g["titolo"],
+                )
+                for g in generici
             ]
 
     if any(k in nome for k in KEEP_COMPACT):

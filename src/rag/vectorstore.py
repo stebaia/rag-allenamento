@@ -54,7 +54,10 @@ _SPESA_QUERY = re.compile(r"(?i)\b(spesa|spese|comprare|compro|acquistare|acquis
 # "il capitolo 1", "capitolo IV", "cap. 3": la domanda cita un capitolo intero.
 # Senza un boost mirato il ranking restituisce un chunk di quel capitolo e
 # quattro di altri, e la risposta descrive solo la sezione capitata in mezzo.
-_CAPITOLO_QUERY = re.compile(r"(?i)\bcap(?:itolo)?\.?\s*(\d+|[ivxlc]+)\b")
+_CAPITOLO_QUERY = re.compile(
+    r"(?i)\b(?:cap(?:itolo)?|art(?:icolo)?|par(?:agrafo)?|sezione)\.?\s*"
+    r"(\d+(?:\.\d+)*|[ivxlc]+)\b"
+)
 
 # La sezione di appartenenza ("2.1.1") compare nel testo del chunk, messa lì
 # dal chunking o dalla frase di contesto generata in fase di indicizzazione.
@@ -162,6 +165,7 @@ def upsert_documento(embeddings, user_id: str, document_id: str, chunks: list[di
                 "reverse_dal": c.get("reverse_dal", ""),
                 "tipo": c.get("tipo", ""),
                 "capitolo": c.get("capitolo", ""),
+                "titolo": c.get("titolo", ""),
             },
         )
         for c in chunks
