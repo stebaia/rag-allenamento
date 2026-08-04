@@ -52,3 +52,6 @@ JWT_EXPIRE_MINUTES = int(os.environ.get("JWT_EXPIRE_MINUTES", "60"))
 # domande fatte tramite la skill (la usi solo tu, quindi è fissa).
 ALEXA_API_KEY = os.environ.get("ALEXA_API_KEY", "")
 ALEXA_USER_ID = os.environ.get("ALEXA_USER_ID", "")
+
+CHECKPOINT_DB = os.environ.get("CHECKPOINT_DB", "checkpoints.sqlite")
+

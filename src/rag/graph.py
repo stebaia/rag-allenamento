@@ -4,9 +4,15 @@ import re
 from datetime import datetime, timedelta
 from typing import TypedDict
 
+from typing import Annotated
+from langchain_core.messages import AIMessage, AnyMessage
+from langgraph.graph.message import add_messages
+
 from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 from langgraph.graph import END, START, StateGraph
+
+from rag.config import MAX_STORICO
 
 _GIORNI_SETTIMANA = (
     "lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato", "domenica",
@@ -103,14 +109,47 @@ def riformula_con_storico(llm, domanda: str, storico: list[dict]) -> str:
 
 
 class Stato(TypedDict):
+    messaggi: Annotated[list[AnyMessage], add_messages]
     domanda: str
     documenti: list[Document]
     risposta: str
     tentativi: int
-    storico: str
 
 
-def costruisci_grafo(retriever, llm, prompt):
+def costruisci_grafo(retriever, llm, prompt, checkpointer = None):
+    
+    def nodo_genera(stato: Stato):
+        contesto = "\n\n".join(d.page_content for d in stato["documenti"])
+        precedenti = stato["messaggi"][:-1]
+        testo_storico = "\n".join(f"{m.type}: {m.content}" for m in precedenti[-MAX_STORICO:])
+        risposta = (prompt | llm | StrOutputParser()).invoke({
+            "context": contesto,
+            "question": stato["domanda"],
+            "oggi": giorno_oggi(),
+            "storico": testo_storico,
+        })
+        # Il messaggio dell'assistente entra nello stato: al turno successivo
+        # sarà già lì, senza che nessun client lo rimandi.
+        return {"risposta": risposta, "messaggi": [AIMessage(content=risposta)]}
+    
+    
+    def nodo_contestualizza(stato: Stato):
+        precedenti = stato["messaggi"][:-1]  # esclude la domanda appena arrivata
+        domanda = stato["messaggi"][-1].content
+        if not precedenti:
+            return {"domanda": domanda}
+        scambi = "\n".join(f"{m.type}: {m.content}" for m in precedenti[-MAX_STORICO:])
+        nuova = llm.invoke(
+            "Questa è una conversazione tra un utente e un assistente su dieta e "
+            "allenamento. Riscrivi l'ULTIMA domanda dell'utente come domanda "
+            "autonoma e completa, esplicitando ciò a cui si riferisce implicitamente. "
+            "Se è già autonoma, restituiscila invariata. Rispondi SOLO con la domanda.\n\n"
+            f"CONVERSAZIONE PRECEDENTE:\n{scambi}\n\n"
+            f"ULTIMA DOMANDA: {domanda}"
+        ).content.strip()
+        print(f"   ↳ contestualizzata: {nuova}")
+        return {"domanda": nuova}
+    
     # NODO: recupera i documenti dall'indice
     def nodo_recupera(stato: Stato):
         # Risolta solo al primo passaggio (tentativi == 0): dal secondo in
@@ -160,7 +199,9 @@ def costruisci_grafo(retriever, llm, prompt):
         return "genera" if giudizio.startswith("s") else "riformula"
 
     builder = StateGraph(Stato)
-    builder.add_node("recupera", nodo_recupera)
+    builder.add_node("contestualizza", nodo_contestualizza)
+    builder.add_edge(START, "contestualizza")
+    builder.add_edge("contestualizza", "recupera")
     builder.add_node("riformula", nodo_riformula)
     builder.add_node("genera", nodo_genera)
 
@@ -170,4 +211,4 @@ def costruisci_grafo(retriever, llm, prompt):
     )
     builder.add_edge("riformula", "recupera")  # ciclo: torna a recuperare
     builder.add_edge("genera", END)
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)

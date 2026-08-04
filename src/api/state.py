@@ -14,6 +14,9 @@ from functools import lru_cache
 
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
+import sqlite3
+from langgraph.checkpoint.sqlite import SqliteSaver
+from rag.config import CHECKPOINT_DB
 
 from rag.config import MODELLO_CONTESTO, MODELLO_EMBED, MODELLO_LLM
 
@@ -34,3 +37,11 @@ def get_embeddings() -> HuggingFaceEmbeddings:
 def get_llm() -> ChatOpenAI:
     """Il client verso il modello linguistico OpenAI usato per generare le risposte."""
     return ChatOpenAI(model=MODELLO_LLM, temperature=0)
+
+
+@lru_cache(maxsize=1)
+def get_checkpointer() -> SqliteSaver:
+    conn = sqlite3.connect(CHECKPOINT_DB, check_same_thread=False)
+    saver = SqliteSaver(conn)
+    saver.setup()  # crea le tabelle dei checkpoint se non esistono
+    return saver
