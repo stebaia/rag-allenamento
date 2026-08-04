@@ -22,14 +22,25 @@ def crea_tool_ricerca(retriever):
 
     @tool
     def cerca_documenti(query: str) -> str:
-        """Cerca informazioni nei documenti personali dell'utente su dieta,
-        piano alimentare, lista della spesa e schede di allenamento.
+        """Cerca nell'archivio di documenti personali dell'utente.
+
+        L'archivio contiene documenti di QUALSIASI genere caricati
+        dall'utente: piani alimentari, liste della spesa e schede di
+        allenamento, ma anche contratti, circolari, normativa e interi libri
+        tecnici. Non sai in anticipo cosa contenga.
+
+        USA SEMPRE questo tool prima di rispondere, anche quando la domanda
+        sembra riguardare un argomento che non conosci o un libro che pensi di
+        non avere: quel documento è probabilmente nell'archivio. Non dire mai
+        all'utente di consultare altrove senza aver prima cercato qui.
 
         Usa query specifiche e ricche di parole chiave. Se la domanda riguarda
-        sia i pasti sia cosa comprare, fai DUE ricerche separate.
+        due cose diverse (es. i pasti e cosa comprare, o due capitoli), fai
+        ricerche separate.
 
         Args:
-            query: cosa cercare, es. "colazione lunedì" o "lista spesa verdura"
+            query: cosa cercare, es. "colazione lunedì", "lista spesa verdura",
+                "capitolo 2 regolamento riscossione coattiva"
         """
         print(f"   ↳ [tool] cerca_documenti({query!r})")
         docs = retriever.invoke(query)

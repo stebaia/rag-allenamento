@@ -56,6 +56,36 @@ _SPESA_QUERY = re.compile(r"(?i)\b(spesa|spese|comprare|compro|acquistare|acquis
 # quattro di altri, e la risposta descrive solo la sezione capitata in mezzo.
 _CAPITOLO_QUERY = re.compile(r"(?i)\bcap(?:itolo)?\.?\s*(\d+|[ivxlc]+)\b")
 
+# La sezione di appartenenza ("2.1.1") compare nel testo del chunk, messa lì
+# dal chunking o dalla frase di contesto generata in fase di indicizzazione.
+_SEZIONE_NEL_TESTO = re.compile(r"\b(\d+\.\d+(?:\.\d+)?)\b")
+
+
+def _uno_per_sezione(punti: list) -> list:
+    """Un chunk per sezione, in ordine di lettura del documento.
+
+    Serve alle domande di sintesi su un capitolo intero: senza, il contesto si
+    riempie di più pezzi della stessa sezione (quella lessicalmente più vicina
+    alla domanda) e la risposta descrive solo quella. I chunk avanzati restano
+    in coda, così non si perde nulla se c'è spazio.
+    """
+    prima_occorrenza: dict[str, object] = {}
+    avanzati = []
+    for p in punti:
+        testo = p.payload.get("page_content", "")
+        m = _SEZIONE_NEL_TESTO.search(testo)
+        sezione = m.group(1) if m else ""
+        if sezione and sezione not in prima_occorrenza:
+            prima_occorrenza[sezione] = p
+        else:
+            avanzati.append(p)
+
+    def ordine(sezione: str) -> tuple:
+        return tuple(int(n) for n in sezione.split("."))
+
+    rappresentanti = [prima_occorrenza[s] for s in sorted(prima_occorrenza, key=ordine)]
+    return rappresentanti + avanzati
+
 _SPESA_ALTRO_DOMINIO = re.compile(
     r"(?i)\b(debitor|creditor|contribuent|tribut|fiscal|giudizi|process|"
     r"legal|ricorso|ingiunzion|notific|esecuzion|pignorament|ipotec|"
@@ -417,13 +447,14 @@ class RetrieverIbrido(BaseRetriever):
                     )
                 ]
             )
-            # I chunk di un capitolo sono molti (fino a un centinaio): teniamo
-            # i più vicini alla domanda, non i primi che il PDF elenca.
-            termini = _tokenizza(query)
-            chunk_giorno.sort(
-                key=lambda p: len(_tokenizza(p.payload.get("page_content", "")) & termini),
-                reverse=True,
-            )
+            # I chunk di un capitolo sono molti (fino a un centinaio) e nel
+            # contesto ne entrano pochi. Ordinarli per somiglianza con la
+            # domanda non funziona: "di cosa parla il capitolo 2" è generica,
+            # e i primi risultavano tutti pezzi della STESSA sezione, così la
+            # risposta ne descriveva una sola. Prendiamo invece un chunk per
+            # ogni sezione, in ordine di lettura: è la copertura che serve a
+            # rispondere "di cosa parla".
+            chunk_giorno = _uno_per_sezione(chunk_giorno)
 
         # 4) Se la domanda chiede la spesa, recupera esplicitamente i chunk
         # della lista della spesa. Senza questo, una domanda che INCROCIA i
