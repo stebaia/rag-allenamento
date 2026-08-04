@@ -64,6 +64,26 @@ _MINIMO_UTILE = 180
 _MAX_CHUNK = 1200
 
 
+_VALORI_ROMANI = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100}
+
+
+def _da_romano(s: str) -> int:
+    """Converte un numero romano in intero.
+
+    I documenti scrivono "Capitolo IV", l'utente chiede "il capitolo 4": il
+    retriever usa questa conversione per far combaciare la domanda col
+    metadato della sezione (vedi vectorstore.py).
+    """
+    totale = 0
+    for i, c in enumerate(s):
+        v = _VALORI_ROMANI[c]
+        # Notazione sottrattiva: IV = 5-1. Se il valore successivo e' maggiore,
+        # questo va sottratto invece che sommato.
+        successivo = _VALORI_ROMANI.get(s[i + 1]) if i + 1 < len(s) else None
+        totale += -v if successivo and successivo > v else v
+    return totale
+
+
 def _pulisci(testo: str) -> str:
     testo = _RIGA_INDICE.sub("", testo)
     testo = _NUMERO_PAGINA.sub("", testo)

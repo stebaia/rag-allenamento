@@ -1,5 +1,22 @@
-"""Chunking su misura dei documenti: split per pasto/giorno (dieta e allenamento)
-o split ricorsivo generico (liste della spesa e testi non strutturati)."""
+"""Punto d'ingresso del chunking: sceglie come dividere un documento.
+
+Due strade, decise da `chunk_documento`:
+
+1. DOCUMENTI PERSONALI (dieta, spesa, allenamento) — riconosciuti dal nome del
+   file o dalla presenza di giorni della settimana. Hanno formato noto e fisso,
+   quindi usano gli splitter su misura definiti in questo modulo
+   (split_pasti, split_spesa, split_sessione): sono tarati bene e non vanno
+   toccati.
+
+2. TUTTO IL RESTO (normativa, manuali, contratti, circolari) — formato ignoto.
+   Passa a `chunking_generico`, che riconosce da solo come il documento è
+   diviso: prima dai titoli che il parser individua per dimensione e grassetto
+   (split_da_parsato), poi, se il PDF non espone quegli attributi, dalle
+   espressioni regolari sul testo (split_generico).
+
+La regola per il futuro: se serve un chunker nuovo per un documento nuovo,
+qualcosa non va nel ramo 2. Il ramo 1 resta chiuso ai tre formati personali.
+"""
 
 import re
 
@@ -25,10 +42,23 @@ _REVERSE_HEADER = re.compile(r"(?i)^Reverse\s*(\d+)\s*[—-]\s*dal\s*(\d{2})/(\d
 # --- Lista della spesa (tabelle alimento/quantità/indicazioni per reparto) ---
 # Il PDF elenca ogni alimento come "■ Nome", seguito dalla quantità su una
 # riga e, opzionalmente, da un'indicazione ("1 confezione") che può
-# continuare sulla riga dopo. Il carattere \x7f è il bullet come lo
-# restituisce pypdf; accettiamo anche ■/•/- per non dipendere da come un
-# eventuale PDF futuro codifica lo stesso elenco.
-_SPESA_ALIMENTO = re.compile(r"^[\x7f■•·\-]\s*(.+)$")
+# continuare sulla riga dopo.
+#
+# Il bullet NON si può elencare per caratteri: è un glifo di un font simbolico,
+# e ogni parser lo decodifica a modo suo — pypdf restituisce "■", PyMuPDF la
+# lettera "I". Elencarli tutti significherebbe legare il chunking al parser in
+# uso, e un cambio di parser romperebbe il riconoscimento in silenzio (è
+# successo: la lista passava da 29 chunk a 1).
+#
+# Il criterio è quindi posizionale: un token isolato all'inizio della riga —
+# un simbolo qualsiasi, o una singola lettera che non forma parola — seguito
+# dal nome dell'alimento. Regge qualunque codifica del bullet.
+# Il negative lookahead esclude le righe che iniziano con una quantità: "≈2
+# tavolette da 100 g" è la continuazione dell'indicazione dell'alimento
+# precedente andata a capo, non un alimento nuovo.
+_SPESA_ALIMENTO = re.compile(
+    r"^(?:[^\w\s]|[A-Za-z](?=\s))\s*(?![\d≈~])(\S.*)$"
+)
 # Reparti del supermercato: fanno da titolo di sezione, e vale la pena
 # tenerli nel chunk (sapere che le patate sono in "Ortofrutta" è utile).
 _SPESA_REPARTO = re.compile(r"(?i)^(Dispensa|Banco frigo(?:\s*/\s*freschi)?|Ortofrutta|Freschi|Surgelati)\s*$")
@@ -348,100 +378,6 @@ def _format_esercizio(numero: str, nome_sessione: str, etichetta: str, es: dict)
         focus = re.sub(r"\s+", " ", " ".join(es["focus"])).strip()
         riga += f", focus {focus}"
     return riga
-
-
-# Documenti normativi/manualistici: "Capitolo IV", "3.2. Titolo", "3.2.1. ...".
-# Lo split su questi confini tiene insieme un paragrafo con il suo titolo,
-# invece di tagliare a metà di un ragionamento come farebbe split_ricorsivo.
-_PARAGRAFO_NUM = re.compile(r"(?m)(?=^(?:Capitolo\s+[IVXLC]+\s*$|\d+\.\d+(?:\.\d+)?\.\s+\S))")
-
-# Righe dell'indice: "1.1. Titolo ......... Pag. 7" oppure "... » 55". Sono
-# rumore puro per il retrieval — ripetono i titoli senza contenuto.
-_RIGA_INDICE = re.compile(
-    r"(?m)^.*?(?:\.{6,}\s*(?:Pag\.|»)?\s*\d*|\s»\s*\d+)\s*$"
-)
-
-# Un chunk che è solo un titolo (poche parole, nessuna frase) non risponde a
-# nessuna domanda: occupa un posto nel contesto senza portare informazione.
-_LUNGHEZZA_MINIMA_CHUNK = 200
-
-# Da cosa si riconosce l'inizio di un capitolo: l'intestazione esplicita
-# ("Capitolo IV") o il primo livello della numerazione di un paragrafo
-# ("4.2.1." -> capitolo 4).
-_CAPITOLO_ROMANO = re.compile(r"^Capitolo\s+([IVXLC]+)\b")
-_PRIMO_LIVELLO = re.compile(r"^(\d+)\.\d+")
-
-_VALORI_ROMANI = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100}
-
-
-def _da_romano(s: str) -> int:
-    """Converte un numero romano in intero: i capitoli sono scritti "IV" ma
-    l'utente chiede "il capitolo 4"."""
-    totale = 0
-    for i, c in enumerate(s):
-        v = _VALORI_ROMANI[c]
-        # Notazione sottrattiva: IV = 5-1. Se il valore successivo è maggiore,
-        # questo va sottratto invece che sommato.
-        successivo = _VALORI_ROMANI.get(s[i + 1]) if i + 1 < len(s) else None
-        totale += -v if successivo and successivo > v else v
-    return totale
-
-
-def split_paragrafi_numerati(
-    testo: str, max_caratteri: int = 1200
-) -> list[tuple[str, str]]:
-    """Split di testi strutturati in capitoli e paragrafi numerati.
-
-    Pensato per documenti normativi e manuali (contratti, guide operative):
-    la numerazione è il confine semantico naturale, molto meglio del taglio a
-    lunghezza fissa. I paragrafi troppo lunghi vengono comunque ridotti da
-    split_ricorsivo, che però parte da un blocco già coerente.
-
-    Ritorna coppie (capitolo, testo): il capitolo diventa un metadato, che
-    permette al retriever di recuperare TUTTI i pezzi di un capitolo quando la
-    domanda ne cita uno ("di cosa parla il capitolo 1?"). Senza, una domanda
-    sul capitolo riceve un chunk di quel capitolo e quattro di altri.
-
-    Ritorna [] se il testo non ha questa struttura, così il chiamante può
-    ricadere sullo split generico.
-    """
-    pulito = _RIGA_INDICE.sub("", testo)
-    parti = [p.strip() for p in _PARAGRAFO_NUM.split(pulito) if p.strip()]
-    # Un solo pezzo = la struttura non è stata riconosciuta.
-    if len(parti) < 2:
-        return []
-
-    # Scarta i residui dell'indice: pezzi troppo corti per contenere una frase
-    # compiuta (tipicamente il solo titolo del paragrafo).
-    parti = [p for p in parti if len(p) >= _LUNGHEZZA_MINIMA_CHUNK]
-    if not parti:
-        return []
-
-    chunk = []
-    capitolo = ""
-    for p in parti:
-        # Il capitolo corrente si aggiorna su "Capitolo IV" (in numeri romani)
-        # e sul primo numero dei paragrafi "4.2.1.", e resta valido per tutti
-        # i pezzi successivi finché non ne compare un altro.
-        intestazione = _CAPITOLO_ROMANO.match(p)
-        if intestazione:
-            capitolo = str(_da_romano(intestazione.group(1)))
-        else:
-            num = _PRIMO_LIVELLO.match(p)
-            if num:
-                capitolo = num.group(1)
-
-        if len(p) <= max_caratteri:
-            chunk.append((capitolo, re.sub(r"[ \t]+", " ", p)))
-            continue
-        # Paragrafo lungo: lo spezziamo, ma ripetiamo il titolo in testa a
-        # ogni pezzo — senza, i pezzi dal secondo in poi perdono il contesto
-        # ("comma 3" senza sapere di quale articolo) e diventano irrecuperabili.
-        titolo = p.split("\n", 1)[0][:90]
-        for i, sotto in enumerate(split_ricorsivo(p, max_caratteri)):
-            testo_chunk = sotto if i == 0 else f"{titolo} (segue)\n{sotto}"
-            chunk.append((capitolo, re.sub(r"[ \t]+", " ", testo_chunk)))
-    return chunk
 
 
 def split_strutturato(testo: str) -> list[str]:

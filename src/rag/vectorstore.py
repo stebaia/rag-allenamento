@@ -31,7 +31,8 @@ from pydantic import PrivateAttr
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
-from .chunking import _GIORNO, _da_romano, _norm_giorno
+from .chunking import _GIORNO, _norm_giorno
+from .chunking_generico import _da_romano
 from .config import QDRANT_COLLECTION, QDRANT_URL
 
 _REVERSE_QUERY = re.compile(r"(?i)reverse\s*(\d+)")
