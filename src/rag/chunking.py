@@ -53,7 +53,7 @@ def _norm_giorno(s: str) -> str:
     return s.lower().replace("ì", "i")
 
 
-def _record(testo: str, fonte: str, *, giorno: str = "", reverse: str = "", reverse_dal: str = "", tipo: str = "") -> dict:
+def _record(testo: str, fonte: str, *, giorno: str = "", reverse: str = "", reverse_dal: str = "", tipo: str = "", capitolo: str = "") -> dict:
     """Un chunk con tutti i metadati usati dal retriever.
 
     Tenerlo in una funzione sola garantisce che ogni chunk abbia ESATTAMENTE
@@ -69,6 +69,9 @@ def _record(testo: str, fonte: str, *, giorno: str = "", reverse: str = "", reve
         "reverse": reverse,
         "reverse_dal": reverse_dal,
         "tipo": tipo,
+        # Numero del capitolo per i documenti strutturati, "" per gli altri:
+        # permette al retriever di raccogliere tutti i pezzi di un capitolo.
+        "capitolo": capitolo,
     }
 
 
@@ -84,7 +87,8 @@ def chunk_documento(doc: dict) -> list[dict]:
         paragrafi = split_paragrafi_numerati(doc["testo"])
         if paragrafi:
             return [
-                _record(p, doc["fonte"], tipo="documento") for p in paragrafi
+                _record(p, doc["fonte"], tipo="documento", capitolo=cap)
+                for cap, p in paragrafi
             ]
 
     if any(k in nome for k in KEEP_COMPACT):
@@ -338,14 +342,42 @@ _RIGA_INDICE = re.compile(
 # nessuna domanda: occupa un posto nel contesto senza portare informazione.
 _LUNGHEZZA_MINIMA_CHUNK = 200
 
+# Da cosa si riconosce l'inizio di un capitolo: l'intestazione esplicita
+# ("Capitolo IV") o il primo livello della numerazione di un paragrafo
+# ("4.2.1." -> capitolo 4).
+_CAPITOLO_ROMANO = re.compile(r"^Capitolo\s+([IVXLC]+)\b")
+_PRIMO_LIVELLO = re.compile(r"^(\d+)\.\d+")
 
-def split_paragrafi_numerati(testo: str, max_caratteri: int = 1200) -> list[str]:
+_VALORI_ROMANI = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100}
+
+
+def _da_romano(s: str) -> int:
+    """Converte un numero romano in intero: i capitoli sono scritti "IV" ma
+    l'utente chiede "il capitolo 4"."""
+    totale = 0
+    for i, c in enumerate(s):
+        v = _VALORI_ROMANI[c]
+        # Notazione sottrattiva: IV = 5-1. Se il valore successivo è maggiore,
+        # questo va sottratto invece che sommato.
+        successivo = _VALORI_ROMANI.get(s[i + 1]) if i + 1 < len(s) else None
+        totale += -v if successivo and successivo > v else v
+    return totale
+
+
+def split_paragrafi_numerati(
+    testo: str, max_caratteri: int = 1200
+) -> list[tuple[str, str]]:
     """Split di testi strutturati in capitoli e paragrafi numerati.
 
     Pensato per documenti normativi e manuali (contratti, guide operative):
     la numerazione è il confine semantico naturale, molto meglio del taglio a
     lunghezza fissa. I paragrafi troppo lunghi vengono comunque ridotti da
     split_ricorsivo, che però parte da un blocco già coerente.
+
+    Ritorna coppie (capitolo, testo): il capitolo diventa un metadato, che
+    permette al retriever di recuperare TUTTI i pezzi di un capitolo quando la
+    domanda ne cita uno ("di cosa parla il capitolo 1?"). Senza, una domanda
+    sul capitolo riceve un chunk di quel capitolo e quattro di altri.
 
     Ritorna [] se il testo non ha questa struttura, così il chiamante può
     ricadere sullo split generico.
@@ -363,9 +395,21 @@ def split_paragrafi_numerati(testo: str, max_caratteri: int = 1200) -> list[str]
         return []
 
     chunk = []
+    capitolo = ""
     for p in parti:
+        # Il capitolo corrente si aggiorna su "Capitolo IV" (in numeri romani)
+        # e sul primo numero dei paragrafi "4.2.1.", e resta valido per tutti
+        # i pezzi successivi finché non ne compare un altro.
+        intestazione = _CAPITOLO_ROMANO.match(p)
+        if intestazione:
+            capitolo = str(_da_romano(intestazione.group(1)))
+        else:
+            num = _PRIMO_LIVELLO.match(p)
+            if num:
+                capitolo = num.group(1)
+
         if len(p) <= max_caratteri:
-            chunk.append(re.sub(r"[ \t]+", " ", p))
+            chunk.append((capitolo, re.sub(r"[ \t]+", " ", p)))
             continue
         # Paragrafo lungo: lo spezziamo, ma ripetiamo il titolo in testa a
         # ogni pezzo — senza, i pezzi dal secondo in poi perdono il contesto
@@ -373,7 +417,7 @@ def split_paragrafi_numerati(testo: str, max_caratteri: int = 1200) -> list[str]
         titolo = p.split("\n", 1)[0][:90]
         for i, sotto in enumerate(split_ricorsivo(p, max_caratteri)):
             testo_chunk = sotto if i == 0 else f"{titolo} (segue)\n{sotto}"
-            chunk.append(re.sub(r"[ \t]+", " ", testo_chunk))
+            chunk.append((capitolo, re.sub(r"[ \t]+", " ", testo_chunk)))
     return chunk
 
 

@@ -31,7 +31,7 @@ from pydantic import PrivateAttr
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
-from .chunking import _GIORNO, _norm_giorno
+from .chunking import _GIORNO, _da_romano, _norm_giorno
 from .config import QDRANT_COLLECTION, QDRANT_URL
 
 _REVERSE_QUERY = re.compile(r"(?i)reverse\s*(\d+)")
@@ -51,6 +51,11 @@ _SPESA_QUERY = re.compile(r"(?i)\b(spesa|spese|comprare|compro|acquistare|acquis
 # un contratto. Se la domanda contiene uno di questi termini il dominio non è
 # quello alimentare, e il boost sulla spesa va soppresso: altrimenti si
 # infilano in testa al contesto gli alimenti del supermercato.
+# "il capitolo 1", "capitolo IV", "cap. 3": la domanda cita un capitolo intero.
+# Senza un boost mirato il ranking restituisce un chunk di quel capitolo e
+# quattro di altri, e la risposta descrive solo la sezione capitata in mezzo.
+_CAPITOLO_QUERY = re.compile(r"(?i)\bcap(?:itolo)?\.?\s*(\d+|[ivxlc]+)\b")
+
 _SPESA_ALTRO_DOMINIO = re.compile(
     r"(?i)\b(debitor|creditor|contribuent|tribut|fiscal|giudizi|process|"
     r"legal|ricorso|ingiunzion|notific|esecuzion|pignorament|ipotec|"
@@ -126,6 +131,7 @@ def upsert_documento(embeddings, user_id: str, document_id: str, chunks: list[di
                 "reverse": c.get("reverse", ""),
                 "reverse_dal": c.get("reverse_dal", ""),
                 "tipo": c.get("tipo", ""),
+                "capitolo": c.get("capitolo", ""),
             },
         )
         for c in chunks
@@ -392,6 +398,32 @@ class RetrieverIbrido(BaseRetriever):
             # invece di lasciare l'utente senza risposta.
             if not chunk_giorno and reverse_target:
                 chunk_giorno = self._chunk_del_giorno([condizione_giorno])
+
+        # 3-bis) Se la domanda cita un capitolo, recupera i chunk di QUEL
+        # capitolo. Vale lo stesso principio del boost sul giorno: è una parte
+        # esplicita della domanda, e il solo ranking semantico non basta —
+        # "di cosa parla il capitolo 1?" restituiva un chunk del capitolo I e
+        # quattro presi dai capitoli V, VI e VII.
+        match_capitolo = _CAPITOLO_QUERY.search(query)
+        if match_capitolo and not chunk_giorno:
+            numero = match_capitolo.group(1)
+            if not numero.isdigit():
+                numero = str(_da_romano(numero.upper()))
+            chunk_giorno = self._chunk_del_giorno(
+                [
+                    qmodels.FieldCondition(
+                        key="metadata.capitolo",
+                        match=qmodels.MatchValue(value=numero),
+                    )
+                ]
+            )
+            # I chunk di un capitolo sono molti (fino a un centinaio): teniamo
+            # i più vicini alla domanda, non i primi che il PDF elenca.
+            termini = _tokenizza(query)
+            chunk_giorno.sort(
+                key=lambda p: len(_tokenizza(p.payload.get("page_content", "")) & termini),
+                reverse=True,
+            )
 
         # 4) Se la domanda chiede la spesa, recupera esplicitamente i chunk
         # della lista della spesa. Senza questo, una domanda che INCROCIA i
