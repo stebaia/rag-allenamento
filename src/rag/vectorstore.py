@@ -33,7 +33,8 @@ from qdrant_client.http import models as qmodels
 
 from .chunking import _GIORNO, _norm_giorno
 from .chunking_generico import _da_romano
-from .config import QDRANT_COLLECTION, QDRANT_URL
+from .config import QDRANT_COLLECTION, QDRANT_URL, RERANKER_ATTIVO
+from .reranking import riordina
 
 _REVERSE_QUERY = re.compile(r"(?i)reverse\s*(\d+)")
 
@@ -226,6 +227,9 @@ class RetrieverIbrido(BaseRetriever):
     3. Se la domanda cita un giorno della settimana, TUTTI i chunk di
        quel giorno vengono inclusi in testa ai risultati, anche quando il
        loro punteggio semantico non li farebbe rientrare nei primi `k`.
+    4. Con RERANKER=on, un cross-encoder riordina i candidati del punto 2
+       (vedi rag/reranking.py). I chunk dei punti 3 e seguenti — giorno,
+       capitolo, spesa — restano fuori dal riordino.
 
     `BaseRetriever` è la classe base di LangChain per "qualunque oggetto
     che sappia rispondere a: data una domanda, dammi dei Document
@@ -247,6 +251,7 @@ class RetrieverIbrido(BaseRetriever):
     _peso_lessicale: float = PrivateAttr()
     _max_boost: int = PrivateAttr()
     _min_altri: int = PrivateAttr()
+    _reranker: bool = PrivateAttr()
 
     def __init__(
         self,
@@ -258,6 +263,7 @@ class RetrieverIbrido(BaseRetriever):
         peso_lessicale: float = 0.4,
         max_boost: int = 8,
         min_altri: int = 4,
+        reranker: bool = RERANKER_ATTIVO,
     ):
         super().__init__()
         self._client = client
@@ -273,6 +279,13 @@ class RetrieverIbrido(BaseRetriever):
         # Posti garantiti ai migliori del ranking ibrido, per le domande che
         # incrociano più documenti (vedi _unisci_giorno_e_ranking).
         self._min_altri = min_altri
+        # Riordino con cross-encoder dei soli candidati del ranking ibrido
+        # (vedi rag/reranking.py). Non tocca i chunk di giorno/spesa/capitolo:
+        # quelli sono recuperati perché la domanda li nomina esplicitamente,
+        # non perché somigliano alla domanda — il boost sulla spesa esiste
+        # proprio perché "Fette biscottate — 12 fette" NON somiglia a "cosa
+        # devo comprare", e un reranker lo declasserebbe.
+        self._reranker = reranker
 
     def _filtro_utente(self, extra: list | None = None) -> qmodels.Filter:
         condizioni = [qmodels.FieldCondition(key="metadata.user_id", match=qmodels.MatchValue(value=self._user_id))]
@@ -488,6 +501,18 @@ class RetrieverIbrido(BaseRetriever):
 
         id_prioritari = {p.id for p in chunk_giorno} | {p.id for p in chunk_spesa}
         altri = [p for p, _ in risultati if p.id not in id_prioritari]
+
+        # 5) Reranking (solo con RERANKER=on). Il cross-encoder riordina i
+        # candidati del ranking ibrido leggendo la coppia (domanda, chunk)
+        # insieme, cosa che né il coseno né il conteggio di parole possono
+        # fare. Agisce QUI e non prima per due ragioni: i chunk prioritari
+        # sono già esclusi da `altri` (vanno lasciati intatti, vedi
+        # self._reranker), e il taglio finale non è ancora avvenuto, quindi
+        # il riordino può ancora far risalire un chunk dal fondo del pool.
+        # Passiamo tutti i candidati, non i primi k: se il ranking ibrido ha
+        # sbagliato, il chunk giusto sta proprio là in fondo.
+        if self._reranker:
+            altri = riordina(query, altri, lambda p: p.payload.get("page_content", ""))
 
         # Il boost sul giorno può essere MOLTO grande: una giornata alimentare
         # sono ~6 chunk, e se l'utente ha indicizzato più versioni dello

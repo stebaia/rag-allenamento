@@ -96,6 +96,7 @@ src/
 │   ├── chunking.py       testo -> chunk mirati        ⚠️ le regex stanno qui
 │   ├── contextualize.py  arricchisce i chunk (vedi CONTEXTUAL_RETRIEVAL.md)
 │   ├── vectorstore.py    Qdrant: indicizzazione + RetrieverIbrido
+│   ├── reranking.py      cross-encoder opzionale (RERANKER=on)
 │   ├── graph.py          LangGraph: il ciclo recupera/riformula/genera
 │   ├── db.py             SQLModel: Utente, Documento
 │   ├── auth.py           bcrypt + JWT
@@ -358,6 +359,47 @@ contenere il pranzo di lunedì e pezzi di altri giorni.
 **4. Boost sulla spesa.** Se la domanda contiene `spesa`/`comprare`/…
 (`_SPESA_QUERY`), i chunk con `tipo="spesa"` vengono recuperati
 esplicitamente. Vedi sotto il perché.
+
+### Il reranking (attivo, si spegne con `RERANKER=off`)
+
+I segnali 1 e 2 hanno un limite comune: sono due numeri calcolati
+**separatamente** per domanda e chunk. L'embedding del chunk è stato prodotto
+in fase di indicizzazione, quello della domanda al momento della ricerca: i
+due testi non si "vedono" mai insieme, si confrontano solo i vettori. Il
+punteggio lessicale conta parole in comune, e non legge nulla.
+
+Un **cross-encoder** fa la cosa opposta: riceve la coppia (domanda, chunk)
+come un unico input e la processa in un solo passaggio, producendo un
+punteggio di rilevanza. Può così riconoscere che un chunk risponde alla
+domanda anche quando non ne condivide le parole né una somiglianza semantica
+generica. Il prezzo è che va eseguito su **ogni coppia**: non esiste un indice
+da precalcolare, per questo il reranking arriva sempre in seconda battuta, sul
+pool già ristretto dal retrieval (i ~40 candidati, non l'intera collection).
+
+Serve soprattutto sui documenti **senza boost dedicato** — CCNL, codici, testi
+di struttura ignota — dove il ranking non ha altri appigli oltre a semantica e
+parole. Sui piani alimentari i boost fanno già un lavoro migliore.
+
+Due scelte di progetto, entrambe deliberate:
+
+**Agisce solo sul ranking ibrido, mai sui boost.** I chunk di
+giorno/spesa/capitolo sono recuperati perché la domanda li nomina
+esplicitamente, non perché somigliano alla domanda. Il boost sulla spesa
+esiste *proprio perché* «Fette biscottate — 12 fette» non somiglia a «cosa
+devo comprare»: passarlo a un reranker lo farebbe declassare, annullando il
+lavoro descritto nella sezione qui sotto.
+
+**Se il modello non si carica, degrada invece di fallire.** Il reranking
+migliora il ranking, non è un prerequisito per rispondere: un modello non
+scaricato o troppa memoria occupata lasciano l'ordine del ranking ibrido, con
+una riga in log, invece di far fallire la domanda dell'utente.
+
+**Costo.** `BAAI/bge-reranker-v2-m3` pesa ~2,3 GB, scaricati al primo avvio, e
+aggiunge 1-3 s per domanda su CPU. Il modello viene caricato nel `lifespan` di
+`api/main.py` insieme agli embedding, così l'attesa la paga l'avvio del
+container e non l'utente che fa la prima domanda. Si spegne con `RERANKER=off`,
+utile per confrontare le due modalità sulla stessa domanda. In Docker, `HF_HOME`
+punta al volume: senza, il modello verrebbe riscaricato a ogni redeploy.
 
 ### Le domande che incrociano due documenti
 
