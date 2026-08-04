@@ -42,18 +42,24 @@ router = APIRouter(tags=["ask"])
 # riformula_con_storico), lo storico qui serve solo per il tono/riferimenti
 # della risposta finale.
 _PROMPT = ChatPromptTemplate.from_template(
-    "Sei un assistente su dieta, spesa e allenamento. Oggi è {oggi}. Rispondi "
-    "usando SOLO il contesto. Se l'informazione non c'è, dillo. Rispondi in "
-    "italiano, conciso.\n\n"
+    # Il dominio NON va dichiarato qui: l'utente indicizza documenti di
+    # qualsiasi tipo (piani alimentari, ma anche contratti e normativa), e un
+    # assistente che si presenta come esperto "di dieta e allenamento" rifiuta
+    # di rispondere su un CCNL anche quando il contesto contiene la risposta.
+    # È il contesto recuperato a stabilire l'argomento, non questa riga.
+    "Sei un assistente che risponde su documenti personali. Oggi è {oggi}. "
+    "Rispondi usando SOLO il contesto, qualunque sia l'argomento che tratta. "
+    "Se l'informazione non c'è nel contesto, dillo. Rispondi in italiano, "
+    "conciso.\n\n"
     # Il contesto può contenere chunk di DUE documenti diversi (la dieta di un
     # giorno e la lista della spesa, vedi il boost in rag/vectorstore.py).
     # Senza questa istruzione l'LLM tende a rispondere solo col primo e a
     # elencare gli alimenti del pasto invece delle quantità da comprare.
-    "Se la domanda riguarda la spesa, riporta le quantità e le indicazioni "
-    "della LISTA DELLA SPESA (es. '1 confezione'), non i grammi dei pasti "
-    "del piano alimentare: sono due cose diverse. Se nel contesto trovi sia "
-    "i pasti sia le voci della lista della spesa, incrociali e indica cosa "
-    "comprare per gli alimenti di quei pasti.\n\n"
+    "Se — e solo se — il contesto contiene un piano alimentare o una lista "
+    "della spesa: per le domande sulla spesa riporta le quantità e le "
+    "indicazioni della LISTA DELLA SPESA (es. '1 confezione'), non i grammi "
+    "dei pasti, che sono un'altra cosa; se trovi sia i pasti sia le voci "
+    "della lista, incrociali e indica cosa comprare per quegli alimenti.\n\n"
     "CONVERSAZIONE PRECEDENTE:\n{storico}\n\n"
     "CONTESTO:\n{context}\n\nDOMANDA: {question}"
 )
@@ -64,10 +70,15 @@ _PROMPT = ChatPromptTemplate.from_template(
 # {context}: è l'LLM che decide se chiamare cerca_documenti e con che query,
 # quindi il prompt descrive un COMPORTAMENTO invece di incorniciare dei dati.
 _SYSTEM_AGENTE = (
-    "Sei un assistente su dieta, spesa e allenamento. Oggi è {oggi}. "
+    # Come per _PROMPT: nessun dominio dichiarato, altrimenti l'agente rifiuta
+    # le domande su documenti che non siano dieta/allenamento.
+    "Sei un assistente che risponde su documenti personali dell'utente, di "
+    "qualsiasi tipo: piani alimentari e schede di allenamento, ma anche "
+    "contratti, normativa e circolari. Oggi è {oggi}. "
     "Per rispondere usa il tool cerca_documenti: non inventare nulla e non "
     "rispondere a memoria sui contenuti dei documenti.\n\n"
-    "Rispondi ESATTAMENTE a ciò che è stato chiesto:\n"
+    "Rispondi ESATTAMENTE a ciò che è stato chiesto. Se il contesto riguarda "
+    "un piano alimentare o una lista della spesa, distingui i due casi:\n"
     "- domanda sui PASTI ('cosa mangio', 'cosa c'è a cena') → una ricerca sui "
     "pasti, e riporta gli alimenti con i grammi del piano alimentare;\n"
     "- domanda sulla SPESA ('cosa devo comprare') → riporta le quantità della "
