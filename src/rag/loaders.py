@@ -3,21 +3,27 @@
 import glob
 import os
 
-from pypdf import PdfReader
+from .parsing import parse_pdf
 
 
-def carica_file(percorso: str) -> dict | None:
-    """Estrae testo da un singolo file PDF/TXT. Ritorna None se non c'è testo estraibile."""
+def carica_file(percorso: str, backend: str | None = None) -> dict | None:
+    """Estrae testo e struttura da un file PDF/TXT.
+
+    Ritorna None se non c'è testo estraibile. Oltre a "testo", il dizionario
+    può contenere "parsato": le righe con i loro attributi tipografici, che il
+    chunking usa per riconoscere i titoli senza espressioni regolari.
+    """
     fonte = os.path.basename(percorso)
     if percorso.lower().endswith(".pdf"):
-        reader = PdfReader(percorso)
-        testo = "\n".join((p.extract_text() or "") for p in reader.pages)
-    else:
-        with open(percorso, encoding="utf-8") as f:
-            testo = f.read()
+        doc = parse_pdf(percorso, backend)
+        if not doc.testo.strip():
+            # PDF probabilmente scansionato (una "foto" del testo): servirebbe l'OCR
+            return None
+        return {"fonte": fonte, "testo": doc.testo, "parsato": doc}
 
+    with open(percorso, encoding="utf-8") as f:
+        testo = f.read()
     if not testo.strip():
-        # PDF probabilmente scansionato (una "foto" del testo): servirebbe l'OCR
         return None
     return {"fonte": fonte, "testo": testo}
 

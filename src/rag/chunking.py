@@ -3,7 +3,7 @@ o split ricorsivo generico (liste della spesa e testi non strutturati)."""
 
 import re
 
-from .chunking_generico import split_generico
+from .chunking_generico import split_da_parsato, split_generico
 from .config import KEEP_COMPACT
 
 _GIORNO = re.compile(r"(?i)(luned[ìi]|marted[ìi]|mercoled[ìi]|gioved[ìi]|venerd[ìi]|sabato|domenica)")
@@ -95,7 +95,13 @@ def chunk_documento(doc: dict) -> list[dict]:
     if not any(k in nome for k in KEEP_COMPACT) and not _GIORNO.search(
         doc["testo"][:3000]
     ):
-        generici = split_generico(doc["testo"])
+        # Prima si prova con la struttura del PDF (titoli riconosciuti dal
+        # font), poi con le regex sul testo: il primo criterio vale su
+        # qualsiasi documento, il secondo solo su quelli che numerano le
+        # sezioni in un modo previsto.
+        generici = split_da_parsato(doc["parsato"]) if doc.get("parsato") else []
+        if not generici:
+            generici = split_generico(doc["testo"])
         if generici:
             return [
                 _record(

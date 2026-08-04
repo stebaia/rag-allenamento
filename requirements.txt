@@ -26,3 +26,10 @@ sqlmodel>=0.0.22
 bcrypt>=4.1
 python-jose[cryptography]>=3.3
 email-validator>=2.2
+pymupdf>=1.28
+
+# Parser opzionale per i documenti in cui contano le tabelle. Non installato
+# di default: tira dentro modelli di layout detection (centinaia di MB) e
+# richiede tesseract. Si attiva con PARSER_PDF=unstructured.
+#   pip install "unstructured[pdf]" && brew install tesseract tesseract-lang
+# unstructured>=0.25

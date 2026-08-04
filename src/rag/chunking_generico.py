@@ -142,6 +142,110 @@ def _spezza_lungo(testo: str, massimo: int) -> list[str]:
     return pezzi
 
 
+def split_da_parsato(parsato, max_caratteri: int = _MAX_CHUNK) -> list[dict]:
+    """Divide un documento usando i titoli riconosciuti dal parser.
+
+    È la via preferita quando il PDF è stato letto da un parser che espone gli
+    attributi tipografici: un titolo si riconosce perché è in grassetto o più
+    grande del corpo, criterio che vale su qualsiasi documento. Le espressioni
+    regolari restano come ripiego per i PDF senza questi attributi.
+
+    Il riferimento di sezione ("46", "2.1") viene comunque estratto dal testo
+    del titolo, perché è quello che l'utente cita nelle domande.
+    """
+    righe = getattr(parsato, "righe", None)
+    if not righe:
+        return []
+
+    # Una riga apre una sezione se il parser la riconosce come titolo OPPURE se
+    # inizia con un riferimento esplicito ("Articolo 46"). Il solo criterio
+    # tipografico non basta: nel Codice della Strada i titoli in grassetto sono
+    # i "Capo I", mentre "Articolo 46" è composto come testo normale — e senza
+    # questo secondo criterio l'articolo 46 finirebbe dentro il chunk del Capo,
+    # perdendo il riferimento con cui l'utente lo cerca.
+    grezzi = [
+        i
+        for i, r in enumerate(righe)
+        if parsato.e_titolo(r) or _APRE_SEZIONE.match(r.testo.strip())
+    ]
+    if len(grezzi) < 3:
+        return []
+
+    # Righe di titolo consecutive sono UNA intestazione spezzata
+    # dall'impaginazione, non sezioni diverse. Nel Codice della Strada
+    # "Articolo 46", la fonte normativa e "Nozione di veicolo" stanno su tre
+    # righe tutte in grassetto: trattarle come tre confini produce tre blocchi
+    # troppo corti, che vengono accorpati al precedente facendo perdere il
+    # riferimento "46" con cui l'utente cerca l'articolo.
+    confini = [i for j, i in enumerate(grezzi) if j == 0 or i - grezzi[j - 1] > 1]
+    if len(confini) < 3:
+        return []
+
+    chunk = []
+    for n, inizio in enumerate(confini):
+        fine = confini[n + 1] if n + 1 < len(confini) else len(righe)
+        # L'intestazione può occupare più righe consecutive (numero, fonte,
+        # rubrica): le uniamo tutte, così "Articolo 46" e "Nozione di veicolo"
+        # stanno nello stesso titolo.
+        pezzi_titolo = []
+        for r in righe[inizio:fine]:
+            if not (parsato.e_titolo(r) or _APRE_SEZIONE.match(r.testo.strip())):
+                break
+            pezzi_titolo.append(r.testo.strip())
+        titolo = " ".join(pezzi_titolo) or righe[inizio].testo.strip()
+        corpo = "\n".join(r.testo for r in righe[inizio:fine]).strip()
+        if len(corpo) < _MINIMO_UTILE:
+            # Titolo senza corpo (o quasi): lo si accorpa al blocco precedente
+            # invece di perderlo, così non si crea un chunk vuoto.
+            if chunk and len(chunk[-1]["testo"]) + len(corpo) <= max_caratteri:
+                chunk[-1]["testo"] += f"\n{corpo}"
+            continue
+
+        riferimento = _riferimento_dal_titolo(titolo)
+        for j, pezzo in enumerate(_spezza_lungo(corpo, max_caratteri)):
+            chunk.append(
+                {
+                    "testo": pezzo if j == 0 else f"{titolo[:110]} (segue)\n{pezzo}",
+                    "sezione": riferimento,
+                    "titolo": titolo[:110],
+                }
+            )
+    return chunk
+
+
+# Una riga che apre una sezione numerata, anche se tipograficamente è testo
+# normale: "Articolo 46", "Art. 12", "3.2.1. Titolo".
+_APRE_SEZIONE = re.compile(
+    r"(?i)^(?:Articolo|Art\.)\s*\d+\b|^\d+(?:\.\d+){1,3}\.?\s+\S"
+)
+
+# Il numero dentro un titolo: "Articolo 46", "3.2.1. Titolo", "Capo II".
+# I riferimenti numerici hanno la precedenza su quelli romani: in un codice
+# "Articolo 46" identifica il contenuto meglio del "Capo I" che lo contiene.
+_RIFERIMENTO_NUMERICO = re.compile(
+    r"(?i)^\W*(?:Articolo|Art\.)?\s*(\d+(?:\.\d+)*)\b"
+)
+_RIFERIMENTO = re.compile(
+    r"(?i)^\W*(?:Articolo|Art\.|Capitolo|Capo|Titolo|Sezione|Parte)?\s*"
+    r"(\d+(?:\.\d+)*|[IVXLC]+)\b"
+)
+
+
+# "Articolo 46" ovunque compaia nell'intestazione, non solo in testa: quando
+# più livelli sono composti insieme ("TITOLO III ... Capo I ... Articolo 46")
+# l'unità che l'utente cerca è l'articolo, non il titolo che lo contiene.
+_ARTICOLO_OVUNQUE = re.compile(r"(?i)\b(?:Articolo|Art\.)\s*(\d+(?:[-/]?\w+)?)\b")
+
+
+def _riferimento_dal_titolo(titolo: str) -> str:
+    """Il riferimento più specifico contenuto nell'intestazione."""
+    m = _ARTICOLO_OVUNQUE.search(titolo)
+    if m:
+        return m.group(1)
+    m = _RIFERIMENTO_NUMERICO.match(titolo) or _RIFERIMENTO.match(titolo)
+    return m.group(1) if m else ""
+
+
 def split_generico(testo: str, max_caratteri: int = _MAX_CHUNK) -> list[dict]:
     """Divide un documento di struttura ignota.
 
