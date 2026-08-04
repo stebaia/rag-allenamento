@@ -49,8 +49,20 @@ _PROMPT = ChatPromptTemplate.from_template(
     # È il contesto recuperato a stabilire l'argomento, non questa riga.
     "Sei un assistente che risponde su documenti personali. Oggi è {oggi}. "
     "Rispondi usando SOLO il contesto, qualunque sia l'argomento che tratta. "
-    "Se l'informazione non c'è nel contesto, dillo. Rispondi in italiano, "
-    "conciso.\n\n"
+    "Rispondi in italiano, conciso.\n\n"
+    # Senza queste regole il modello, quando non trova la risposta, inventa
+    # una parafrasi della domanda per giustificarsi ("non posso dirti dei
+    # diritti e doveri dei lavoratori") e il risultato è incoerente con quello
+    # che l'utente ha davvero chiesto.
+    "Se il contesto non basta a rispondere:\n"
+    "1. NON riformulare né ampliare la domanda dell'utente: non attribuirgli "
+    "argomenti che non ha nominato;\n"
+    "2. di' cosa il contesto contiene DAVVERO sull'argomento chiesto, anche "
+    "se è parziale, citandolo;\n"
+    "3. solo dopo precisa cosa manca, in una frase.\n"
+    "Esempio: se viene chiesto il testo di un articolo e il contesto lo cita "
+    "senza riportarlo, riporta ciò che ne dice e aggiungi che il testo "
+    "integrale non è nei documenti.\n\n"
     # Il contesto può contenere chunk di DUE documenti diversi (la dieta di un
     # giorno e la lista della spesa, vedi il boost in rag/vectorstore.py).
     # Senza questa istruzione l'LLM tende a rispondere solo col primo e a
