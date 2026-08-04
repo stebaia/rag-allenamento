@@ -162,8 +162,16 @@ def _tokenizza(testo: str) -> set[str]:
     Stessa idea usata in rag.py (Indice._tok): serve per calcolare quanto
     la domanda e un chunk condividono le stesse parole chiave, indipendentemente
     dal loro significato semantico (che invece cattura l'embedding).
+
+    I numeri fanno eccezione alla soglia dei 3 caratteri: in un documento
+    normativo "articolo 4" è un riferimento puntuale, e scartare il "4"
+    rendeva quella domanda indistinguibile da una su un articolo qualsiasi.
     """
-    return {w for w in re.findall(r"\w+", testo.lower()) if len(w) > 2}
+    return {
+        w
+        for w in re.findall(r"\w+", testo.lower())
+        if len(w) > 2 or w.isdigit()
+    }
 
 
 class RetrieverIbrido(BaseRetriever):

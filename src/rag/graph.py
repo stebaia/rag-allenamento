@@ -95,7 +95,8 @@ def riformula_con_storico(llm, domanda: str, storico: list[dict]) -> str:
 
     scambi = "\n".join(f"{m['ruolo']}: {m['contenuto']}" for m in storico)
     nuova = llm.invoke(
-        "Questa è una conversazione tra un utente e un assistente su dieta e "
+        "Questa è una conversazione tra un utente e un assistente sui "
+        "documenti personali dell'utente, di qualsiasi argomento. "
         "allenamento. Riscrivi l'ULTIMA domanda dell'utente come domanda "
         "autonoma e completa, esplicitando ciò a cui si riferisce implicitamente "
         "(es. un giorno, una sessione, un piano citati prima nella conversazione). "
@@ -125,7 +126,8 @@ def costruisci_grafo(retriever, llm, prompt, checkpointer = None):
             return {"domanda": domanda}
         scambi = "\n".join(f"{m.type}: {m.content}" for m in precedenti[-MAX_STORICO:])
         nuova = llm.invoke(
-            "Questa è una conversazione tra un utente e un assistente su dieta e "
+            "Questa è una conversazione tra un utente e un assistente sui "
+            "documenti personali dell'utente, di qualsiasi argomento. "
             "allenamento. Riscrivi l'ULTIMA domanda dell'utente come domanda "
             "autonoma e completa, esplicitando ciò a cui si riferisce implicitamente. "
             "Se è già autonoma, restituiscila invariata. Rispondi SOLO con la domanda.\n\n"
@@ -150,9 +152,13 @@ def costruisci_grafo(retriever, llm, prompt, checkpointer = None):
     # NODO: riscrive la domanda quando il recupero è scarso
     def nodo_riformula(stato: Stato):
         nuova = llm.invoke(
+            # Nessun dominio: dire "documenti su dieta e allenamento" faceva
+            # riscrivere una domanda sul CCNL come domanda sulla dieta, e da lì
+            # il recupero non poteva più trovare nulla di pertinente.
             "Riscrivi questa domanda in modo più esplicito e ricco di parole "
-            "chiave, per cercarla in documenti su dieta e allenamento. Rispondi "
-            f"solo con la nuova domanda.\n\nDomanda: {stato['domanda']}"
+            "chiave, mantenendone l'argomento, per cercarla in un archivio di "
+            "documenti personali. Rispondi solo con la nuova domanda.\n\n"
+            f"Domanda: {stato['domanda']}"
         ).content.strip()
         print(f"   ↳ riformulo in: {nuova}")
         return {"domanda": nuova}
@@ -184,10 +190,14 @@ def costruisci_grafo(retriever, llm, prompt, checkpointer = None):
         if stato["tentativi"] >= 2:
             return "genera"
         contesto = "\n\n".join(d.page_content for d in stato["documenti"])
+        # I chunk sono ~800 caratteri l'uno: con un taglio a 1500 il giudice
+        # vedeva meno di due documenti su cinque e bocciava recuperi validi in
+        # cui l'informazione stava nel terzo o nel quarto.
         giudizio = llm.invoke(
             "I documenti qui sotto contengono le informazioni per rispondere alla "
-            "domanda? Rispondi solo 'sì' o 'no'.\n\n"
-            f"DOMANDA: {stato['domanda']}\n\nDOCUMENTI:\n{contesto[:1500]}"
+            "domanda? Rispondi 'sì' se anche solo uno di essi è pertinente, "
+            "'no' solo se nessuno lo è. Rispondi con una parola sola.\n\n"
+            f"DOMANDA: {stato['domanda']}\n\nDOCUMENTI:\n{contesto[:6000]}"
         ).content.strip().lower()
         print(f"   ↳ i documenti bastano? {giudizio}")
         return "genera" if giudizio.startswith("s") else "riformula"
