@@ -535,9 +535,23 @@ class RetrieverIbrido(BaseRetriever):
         ]
 
 
-def retriever_per_utente(embeddings, user_id: str, k: int) -> RetrieverIbrido:
+def retriever_per_utente(
+    embeddings, user_id: str, k: int, reranker: bool = RERANKER_ATTIVO
+) -> RetrieverIbrido:
     """Retriever filtrato sui soli documenti dell'utente, con boost su
     corrispondenze lessicali esatte e sui chunk del giorno citato nella
-    domanda (vedi RetrieverIbrido)."""
+    domanda (vedi RetrieverIbrido).
+
+    `reranker` è esposto qui perché non tutti i chiamanti hanno lo stesso
+    budget di latenza: la skill Alexa deve rispondere entro pochi secondi e lo
+    disattiva (vedi api/routers/alexa.py), mentre in chat qualche secondo in
+    più è accettabile. Il default resta quello dell'ambiente.
+    """
     assicura_collection(embeddings)
-    return RetrieverIbrido(client=ottieni_client(), embeddings=embeddings, user_id=user_id, k=k)
+    return RetrieverIbrido(
+        client=ottieni_client(),
+        embeddings=embeddings,
+        user_id=user_id,
+        k=k,
+        reranker=reranker,
+    )

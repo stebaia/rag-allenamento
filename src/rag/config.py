@@ -27,12 +27,17 @@ MAX_STORICO = 8  # messaggi di chat precedenti passati ad /ask come contesto
 # somiglianza semantica generica. Serve soprattutto sui documenti senza
 # boost dedicato (CCNL, codici), dove il ranking non ha altri appigli.
 #
-# Acceso di default. Ha un costo da conoscere: il modello pesa ~2,3 GB, che
-# vengono scaricati al primo avvio, e aggiunge 1-3 s per domanda su CPU. Si
-# spegne con RERANKER=off — utile per confrontare le due modalità sulla stessa
-# domanda, o per un ambiente dove quel mezzo minuto di attesa non è
-# accettabile.
-RERANKER_ATTIVO = os.environ.get("RERANKER", "on").strip().lower() in ("on", "1", "true")
+# SPENTO di default: chi non lo configura non ne paga nulla — né i ~2,3 GB di
+# download al primo avvio, né la RAM, né 1-3 s di latenza per domanda. Si
+# accende con RERANKER=on, e allora vale la pena impostare anche HF_HOME su un
+# volume persistente (vedi docker-compose.yaml).
+#
+# Il default è "off" e non "on" per un motivo preciso: questa è l'unica riga
+# che decide se un deploy si porta dietro un modello da 2,3 GB. Un componente
+# opzionale che si attiva da solo non è opzionale, ed è esattamente il caso in
+# cui un ambiente con poca RAM o banda lenta degrada senza che nessuno abbia
+# chiesto nulla.
+RERANKER_ATTIVO = os.environ.get("RERANKER", "off").strip().lower() in ("on", "1", "true")
 MODELLO_RERANKER = os.environ.get("MODELLO_RERANKER", "BAAI/bge-reranker-v2-m3")
 
 # Nomi file che vengono trattati come liste (chunking compatto invece che per-pasto)

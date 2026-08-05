@@ -48,7 +48,15 @@ class RispostaOut(BaseModel):
 @router.post("/ask", response_model=RispostaOut)
 def alexa_ask(payload: DomandaIn, user_id: AlexaUserId):
     embeddings = get_embeddings()
-    retriever = retriever_per_utente(embeddings, user_id, K)
+    # Niente reranking qui, a differenza di /ask: Alexa chiude la connessione
+    # dopo pochi secondi, e questo grafo nel caso peggiore recupera DUE volte
+    # (il giudice può bocciare il primo tentativo, vedi rag/graph.py), quindi
+    # il costo del cross-encoder si paga raddoppiato. La rinuncia è poco
+    # dolorosa proprio qui: le domande vocali riguardano dieta, spesa e
+    # allenamento, dove i boost espliciti fanno già il lavoro migliore — il
+    # reranker serve sui documenti che ne sono privi (CCNL, codici), che non
+    # si consultano a voce.
+    retriever = retriever_per_utente(embeddings, user_id, K, reranker=False)
     llm = get_llm()
     grafo = costruisci_grafo(retriever, llm, _PROMPT, checkpointer=get_checkpointer())
 

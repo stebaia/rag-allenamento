@@ -21,14 +21,25 @@ services:
       # conversazioni e memorie si perderebbero a ogni redeploy.
       CHECKPOINT_DB: /data/checkpoints.sqlite
       STORE_DB: /data/store.sqlite
-      # Reranking: acceso se non impostata, come in locale.
-      RERANKER: ${RERANKER:-on}
+      # Reranking: SPENTO se non impostata. Chi non lo configura non deve
+      # pagarne nulla — né il download, né la RAM, né la latenza.
+      RERANKER: ${RERANKER:-off}
       MODELLO_RERANKER: ${MODELLO_RERANKER:-BAAI/bge-reranker-v2-m3}
-      # I modelli scaricati da HuggingFace (embedding e reranker) vanno sul
-      # volume: nella working directory del container finirebbero nel layer
-      # effimero e verrebbero riscaricati — 2,3 GB per il reranker — a ogni
-      # redeploy, allungando ogni avvio di minuti.
-      HF_HOME: /data/hf
+      # Cache dei modelli HuggingFace. NON impostata di default: si eredita
+      # quella dell'immagine, che è il comportamento che l'app aveva prima che
+      # il reranker esistesse.
+      #
+      # La sintassi senza valore ("HF_HOME:" e basta) passa la variabile solo
+      # se esiste nell'ambiente; scrivere ${HF_HOME:-} la imposterebbe a
+      # stringa vuota, e HuggingFace risolve la stringa vuota nel path
+      # RELATIVO "hub" — cioè /app/hub dentro il container, effimero e
+      # ricreato a ogni riavvio. Peggio che non impostarla affatto.
+      #
+      # Vale la pena valorizzarla (es. /data/hf) SOLO con RERANKER=on, per non
+      # riscaricare 2,3 GB a ogni redeploy: sposta sul volume anche i ~120 MB
+      # dell'embedding, quindi va fatto verificando che il volume sia
+      # scrivibile dall'utente del container.
+      HF_HOME:
       # Tracing LangSmith: se LANGSMITH_TRACING non è impostata resta spento
       # e l'app funziona normalmente. LANGSMITH_ENDPOINT serve solo agli
       # account sulla regione europea (il default punta agli Stati Uniti).

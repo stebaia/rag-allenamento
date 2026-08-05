@@ -360,7 +360,7 @@ contenere il pranzo di lunedì e pezzi di altri giorni.
 (`_SPESA_QUERY`), i chunk con `tipo="spesa"` vengono recuperati
 esplicitamente. Vedi sotto il perché.
 
-### Il reranking (attivo, si spegne con `RERANKER=off`)
+### Il reranking (opzionale, si accende con `RERANKER=on`)
 
 I segnali 1 e 2 hanno un limite comune: sono due numeri calcolati
 **separatamente** per domanda e chunk. L'embedding del chunk è stato prodotto
@@ -394,12 +394,29 @@ migliora il ranking, non è un prerequisito per rispondere: un modello non
 scaricato o troppa memoria occupata lasciano l'ordine del ranking ibrido, con
 una riga in log, invece di far fallire la domanda dell'utente.
 
-**Costo.** `BAAI/bge-reranker-v2-m3` pesa ~2,3 GB, scaricati al primo avvio, e
-aggiunge 1-3 s per domanda su CPU. Il modello viene caricato nel `lifespan` di
-`api/main.py` insieme agli embedding, così l'attesa la paga l'avvio del
-container e non l'utente che fa la prima domanda. Si spegne con `RERANKER=off`,
-utile per confrontare le due modalità sulla stessa domanda. In Docker, `HF_HOME`
-punta al volume: senza, il modello verrebbe riscaricato a ogni redeploy.
+**Costo, e perché è spento di default.** `BAAI/bge-reranker-v2-m3` pesa ~2,3 GB
+scaricati al primo avvio, occupa RAM per tutta la vita del processo e aggiunge
+~1 s per domanda su CPU — che il grafo deterministico può pagare **due volte**,
+perché il giudice può bocciare il primo recupero e farlo ripetere.
+
+Con `RERANKER=off` (il default) non si carica nulla: nessun download, nessuna
+RAM, nessuna latenza. L'app si comporta esattamente come prima che il reranker
+esistesse. Con `RERANKER=on` il modello viene caricato nel `lifespan` di
+`api/main.py`, così l'attesa la paga l'avvio del container e non il primo
+utente; se non si carica, il retriever degrada da sé al ranking ibrido.
+
+Due trappole da conoscere prima di accenderlo in produzione:
+
+- **`HF_HOME`** va impostata a un percorso su volume persistente e scrivibile
+  (es. `/data/hf`), altrimenti i 2,3 GB si riscaricano a ogni redeploy. Ma
+  attenzione: quella variabile sposta sul volume anche i ~120 MB
+  dell'embedding, che prima vivevano nella cache dell'immagine. Se il volume
+  non è scrivibile, si rompe anche il retrieval normale. E **non va mai
+  impostata a stringa vuota**: HuggingFace la risolve nel path relativo `hub`,
+  cioè `/app/hub` dentro il container — effimero, ricreato a ogni riavvio.
+- **La skill Alexa lo salta comunque** (`reranker=False` in
+  `routers/alexa.py`): chiude la connessione dopo pochi secondi, e le domande
+  vocali riguardano documenti che hanno già i boost espliciti.
 
 ### Le domande che incrociano due documenti
 
