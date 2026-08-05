@@ -23,9 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 # load_dotenv() semplicemente non trova un file .env e non fa nulla.
 load_dotenv()
 
-from rag.config import RERANKER_ATTIVO  # noqa: E402
 from rag.db import init_db  # noqa: E402 - va importato dopo load_dotenv
-from rag.reranking import get_reranker  # noqa: E402
 
 from .routers import alexa, ask, auth, documents  # noqa: E402
 from .state import get_embeddings  # noqa: E402
@@ -45,18 +43,6 @@ async def lifespan(app: FastAPI):
     # Chiamandola qui, quel costo si paga una volta all'avvio del
     # container invece che sulla prima richiesta di un utente reale.
     get_embeddings()
-    # Stesso motivo, per il cross-encoder del reranking: qui il costo è ben
-    # più alto (~2,3 GB da scaricare la primissima volta), e ora che RERANKER
-    # è acceso di default lo pagherebbe l'utente che fa la prima domanda.
-    # Il try è necessario perché questo modello, a differenza degli
-    # embedding, NON è indispensabile: se non si carica il retriever degrada
-    # da sé al ranking ibrido (vedi rag/reranking.py), e un server che si
-    # rifiuta di partire sarebbe una regressione peggiore del problema.
-    if RERANKER_ATTIVO:
-        try:
-            get_reranker()
-        except Exception as exc:  # noqa: BLE001 - vedi commento sopra
-            print(f"Reranker non caricato all'avvio ({exc}): si userà il solo ranking ibrido")
     yield
 
 

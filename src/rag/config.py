@@ -18,28 +18,6 @@ MODELLO_CONTESTO = os.environ.get("MODELLO_CONTESTO", "gpt-4o-mini")
 K = 5  # blocchi recuperati
 MAX_STORICO = 8  # messaggi di chat precedenti passati ad /ask come contesto
 
-# --- Reranking (spento di default) ---
-# Il RetrieverIbrido ordina i candidati sommando similarità coseno e
-# punteggio lessicale: due numeri calcolati separatamente per domanda e
-# chunk, che non si "vedono" mai insieme. Un cross-encoder legge invece la
-# COPPIA (domanda, chunk) in un unico passaggio, e riconosce che un chunk
-# risponde alla domanda anche quando non ne condivide le parole né una
-# somiglianza semantica generica. Serve soprattutto sui documenti senza
-# boost dedicato (CCNL, codici), dove il ranking non ha altri appigli.
-#
-# SPENTO di default: chi non lo configura non ne paga nulla — né i ~2,3 GB di
-# download al primo avvio, né la RAM, né 1-3 s di latenza per domanda. Si
-# accende con RERANKER=on, e allora vale la pena impostare anche HF_HOME su un
-# volume persistente (vedi docker-compose.yaml).
-#
-# Il default è "off" e non "on" per un motivo preciso: questa è l'unica riga
-# che decide se un deploy si porta dietro un modello da 2,3 GB. Un componente
-# opzionale che si attiva da solo non è opzionale, ed è esattamente il caso in
-# cui un ambiente con poca RAM o banda lenta degrada senza che nessuno abbia
-# chiesto nulla.
-RERANKER_ATTIVO = os.environ.get("RERANKER", "off").strip().lower() in ("on", "1", "true")
-MODELLO_RERANKER = os.environ.get("MODELLO_RERANKER", "BAAI/bge-reranker-v2-m3")
-
 # Nomi file che vengono trattati come liste (chunking compatto invece che per-pasto)
 KEEP_COMPACT = ("spesa", "lista", "shopping", "grocery")
 

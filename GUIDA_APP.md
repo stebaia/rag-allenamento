@@ -96,7 +96,6 @@ src/
 │   ├── chunking.py       testo -> chunk mirati        ⚠️ le regex stanno qui
 │   ├── contextualize.py  arricchisce i chunk (vedi CONTEXTUAL_RETRIEVAL.md)
 │   ├── vectorstore.py    Qdrant: indicizzazione + RetrieverIbrido
-│   ├── reranking.py      cross-encoder opzionale (RERANKER=on)
 │   ├── graph.py          LangGraph: il ciclo recupera/riformula/genera
 │   ├── db.py             SQLModel: Utente, Documento
 │   ├── auth.py           bcrypt + JWT
@@ -359,64 +358,6 @@ contenere il pranzo di lunedì e pezzi di altri giorni.
 **4. Boost sulla spesa.** Se la domanda contiene `spesa`/`comprare`/…
 (`_SPESA_QUERY`), i chunk con `tipo="spesa"` vengono recuperati
 esplicitamente. Vedi sotto il perché.
-
-### Il reranking (opzionale, si accende con `RERANKER=on`)
-
-I segnali 1 e 2 hanno un limite comune: sono due numeri calcolati
-**separatamente** per domanda e chunk. L'embedding del chunk è stato prodotto
-in fase di indicizzazione, quello della domanda al momento della ricerca: i
-due testi non si "vedono" mai insieme, si confrontano solo i vettori. Il
-punteggio lessicale conta parole in comune, e non legge nulla.
-
-Un **cross-encoder** fa la cosa opposta: riceve la coppia (domanda, chunk)
-come un unico input e la processa in un solo passaggio, producendo un
-punteggio di rilevanza. Può così riconoscere che un chunk risponde alla
-domanda anche quando non ne condivide le parole né una somiglianza semantica
-generica. Il prezzo è che va eseguito su **ogni coppia**: non esiste un indice
-da precalcolare, per questo il reranking arriva sempre in seconda battuta, sul
-pool già ristretto dal retrieval (i ~40 candidati, non l'intera collection).
-
-Serve soprattutto sui documenti **senza boost dedicato** — CCNL, codici, testi
-di struttura ignota — dove il ranking non ha altri appigli oltre a semantica e
-parole. Sui piani alimentari i boost fanno già un lavoro migliore.
-
-Due scelte di progetto, entrambe deliberate:
-
-**Agisce solo sul ranking ibrido, mai sui boost.** I chunk di
-giorno/spesa/capitolo sono recuperati perché la domanda li nomina
-esplicitamente, non perché somigliano alla domanda. Il boost sulla spesa
-esiste *proprio perché* «Fette biscottate — 12 fette» non somiglia a «cosa
-devo comprare»: passarlo a un reranker lo farebbe declassare, annullando il
-lavoro descritto nella sezione qui sotto.
-
-**Se il modello non si carica, degrada invece di fallire.** Il reranking
-migliora il ranking, non è un prerequisito per rispondere: un modello non
-scaricato o troppa memoria occupata lasciano l'ordine del ranking ibrido, con
-una riga in log, invece di far fallire la domanda dell'utente.
-
-**Costo, e perché è spento di default.** `BAAI/bge-reranker-v2-m3` pesa ~2,3 GB
-scaricati al primo avvio, occupa RAM per tutta la vita del processo e aggiunge
-~1 s per domanda su CPU — che il grafo deterministico può pagare **due volte**,
-perché il giudice può bocciare il primo recupero e farlo ripetere.
-
-Con `RERANKER=off` (il default) non si carica nulla: nessun download, nessuna
-RAM, nessuna latenza. L'app si comporta esattamente come prima che il reranker
-esistesse. Con `RERANKER=on` il modello viene caricato nel `lifespan` di
-`api/main.py`, così l'attesa la paga l'avvio del container e non il primo
-utente; se non si carica, il retriever degrada da sé al ranking ibrido.
-
-Due trappole da conoscere prima di accenderlo in produzione:
-
-- **`HF_HOME`** va impostata a un percorso su volume persistente e scrivibile
-  (es. `/data/hf`), altrimenti i 2,3 GB si riscaricano a ogni redeploy. Ma
-  attenzione: quella variabile sposta sul volume anche i ~120 MB
-  dell'embedding, che prima vivevano nella cache dell'immagine. Se il volume
-  non è scrivibile, si rompe anche il retrieval normale. E **non va mai
-  impostata a stringa vuota**: HuggingFace la risolve nel path relativo `hub`,
-  cioè `/app/hub` dentro il container — effimero, ricreato a ogni riavvio.
-- **La skill Alexa lo salta comunque** (`reranker=False` in
-  `routers/alexa.py`): chiude la connessione dopo pochi secondi, e le domande
-  vocali riguardano documenti che hanno già i boost espliciti.
 
 ### Le domande che incrociano due documenti
 
